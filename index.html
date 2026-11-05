@@ -99,7 +99,8 @@
         <button class="active" data-tab="tab-map">1. Bok-kart &amp; Nærmeste Naboer</button>
         <button data-tab="tab-axes">2. SVD-Akser (U og V)</button>
         <button data-tab="tab-galaxy">3. Ord-mot-ord Galakse &amp; Dual-Graph</button>
-        <button data-tab="tab-world">4. «Norge vs. Verden» &amp; Begrepstabell</button>
+        <button data-tab="tab-world">4. Begrepstabell (Fano vs. Spredning)</button>
+        <button data-tab="tab-probe">5. Sjekk enkeltbok (Multi-vektor)</button>
       </nav>
 
       <!-- TAB 1: BOK-KART -->
@@ -199,6 +200,43 @@
             <tbody id="wordTableBody"></tbody>
           </table>
         </div>
+      </section>
+
+      <!-- TAB 5: SJEKK ENKELTBOK MOT KORPUSET (MULTI-VEKTOR DEKOMPONERING) -->
+      <section id="tab-probe" class="board-column hidden">
+        <h3 style="margin-block-start:0;">Sjekk en bok eller tekst mot korpuset · Multi-vektor dekomponering</h3>
+        <p style="font-size:0.84rem;color:var(--text-muted);margin-block-end:0.9rem;">
+          En bok har ikke bare én unik trekkvektor: avhengig av om vi vekter etter <strong>lokal kapittel-burstiness (Fano σ²/μ)</strong>, <strong>gjennomgående bakgrunnsramme (høy spredning, lav Fano)</strong>, <strong>global PPMI mot nb.totals</strong> eller <strong>Dual-Graph ordgalakser</strong>, peker samme bok mot ulike naboer og temaer i korpuset.
+        </p>
+
+        <div class="split-grid" style="grid-template-columns: 1fr 1fr; margin-block-end: 1rem;">
+          <div class="axis-card">
+            <strong style="font-size:0.88rem;">A. Hent en bok fra Nasjonalbiblioteket (URN eller tittel/forfatter)</strong>
+            <div style="display:flex;gap:0.45rem;margin-block-top:0.5rem;flex-wrap:wrap;">
+              <input type="text" id="probeNbQuery" placeholder="Søk tittel/forfatter eller lim inn URN (f.eks. Schønberg Erken, Diablito, Ibsen)..." style="flex:1;min-inline-size:210px;" />
+              <button id="probeNbSearchBtn" class="primary">Søk / Hent chunks</button>
+            </div>
+            <div id="probeNbResults" style="margin-block-top:0.5rem;font-size:0.82rem;"></div>
+          </div>
+
+          <div class="axis-card">
+            <strong style="font-size:0.88rem;">B. Last opp lokal tekstfil (.txt / .md) eller dekomponer bok i korpuset</strong>
+            <div style="display:flex;gap:0.45rem;margin-block-top:0.5rem;flex-wrap:wrap;align-items:center;">
+              <input type="file" id="probeFileInput" accept=".txt,.md,.csv,.json" hidden />
+              <button id="probeFileBtn">Last opp .txt / .md</button>
+              <span style="font-size:0.8rem;color:var(--text-muted);">eller velg fra korpus:</span>
+              <select id="probeCorpusBookSelect" style="flex:1;min-inline-size:160px;"></select>
+            </div>
+            <details style="margin-block-top:0.5rem;font-size:0.8rem;color:var(--text-muted);">
+              <summary style="cursor:pointer;">Eller lim inn råtekst direkte</summary>
+              <textarea id="probeRawText" rows="3" placeholder="Lim inn tekst her (deles automatisk i 250-ords chunks)..." style="inline-size:100%;margin-block-top:0.35rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:0.4rem;"></textarea>
+              <button id="probeRunTextBtn" style="margin-block-top:0.35rem;">Analyser innlimt tekst</button>
+            </details>
+          </div>
+        </div>
+
+        <div id="probeStatus" style="font-size:0.84rem;color:var(--accent);margin-block-end:0.65rem;"></div>
+        <div id="probeResultsContainer"></div>
       </section>
     </main>
   </div>

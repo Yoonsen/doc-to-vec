@@ -250,13 +250,24 @@ function populateSelects() {
 
   const bookSel = document.getElementById("bookSelect");
   bookSel.innerHTML = "";
+  const probeSel = document.getElementById("probeCorpusBookSelect");
+  if (probeSel) probeSel.innerHTML = `<option value="">— Velg en bok fra korpuset —</option>`;
+
   state.bundle.books.forEach((b) => {
+    const auth = b.authors ? b.authors.split("/")[0].trim() : "";
+    const label = `[${b.year || "?"}] ${b.title.slice(0, 62)} (${auth})`;
     const opt = document.createElement("option");
     opt.value = b.id;
-    const auth = b.authors ? b.authors.split("/")[0].trim() : "";
-    opt.textContent = `[${b.year || "?"}] ${b.title.slice(0, 62)} (${auth})`;
+    opt.textContent = label;
     if (b.id === state.selectedBookId) opt.selected = true;
     bookSel.appendChild(opt);
+
+    if (probeSel) {
+      const optP = document.createElement("option");
+      optP.value = b.id;
+      optP.textContent = label;
+      probeSel.appendChild(optP);
+    }
   });
 }
 
@@ -547,6 +558,26 @@ function renderScatterPlot() {
     ctx.fillStyle = "#ffffff";
     ctx.font = "600 12px system-ui, sans-serif";
     ctx.fillText(`[${b.year}] ${b.title.slice(0, 42)}`, Math.min(W - 240, selPt.x + 10), Math.max(18, selPt.y - 8));
+  }
+
+  // Tegn innsjekket testbok (state.probeOverlay) som gullmarkør hvis aktiv
+  if (state.probeOverlay && state.probeOverlay.uProj) {
+    const uxProbe = state.probeOverlay.uProj[state.axisX] * sx;
+    const uyProbe = state.probeOverlay.uProj[state.axisY] * sy;
+    const px = Math.max(18, Math.min(W - 18, toScreenX(uxProbe)));
+    const py = Math.max(18, Math.min(H - 18, toScreenY(uyProbe)));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, py, 9.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#fde047";
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "#0f172a";
+    ctx.stroke();
+    ctx.fillStyle = "#fde047";
+    ctx.font = "700 12.5px system-ui, sans-serif";
+    ctx.fillText(`★ ${state.probeOverlay.title.slice(0, 38)}`, Math.min(W - 240, px + 13), Math.max(20, py - 10));
+    ctx.restore();
   }
 }
 
@@ -1347,6 +1378,494 @@ async function runLiveApiFetch() {
   }
 }
 
+// =============================================================================
+// TAB 5: SJEKK ENKELTBOK MOT KORPUSET (MULTI-VEKTOR DEKOMPONERING)
+// =============================================================================
+
+async function probeSearchOrFetchNb() {
+  const q = (document.getElementById("probeNbQuery").value || "").trim();
+  const statusEl = document.getElementById("probeStatus");
+  const resEl = document.getElementById("probeNbResults");
+  if (!q) return;
+
+  if (q.startsWith("URN:NBN:")) {
+    resEl.innerHTML = "";
+    await fetchAndProbeNbUrn(q, q, "", 2000);
+    return;
+  }
+
+  try {
+    statusEl.textContent = `Søker i Nasjonalbiblioteket etter «${q}»...`;
+    let cJson = {};
+    for (const field of ["title", "author", "freetext"]) {
+      const body = { doctype: "digibok", limit: 12 };
+      body[field] = q;
+      const resp = await fetch("https://api.nb.no/dhlab/build_corpus", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      cJson = await resp.json();
+      if (cJson.urn && Object.keys(cJson.urn).length > 0) break;
+    }
+
+    const urnMap = cJson.urn || {};
+    const keys = Object.keys(urnMap);
+    if (keys.length === 0) {
+      statusEl.textContent = `Fant ingen bøker i NB på «${q}».`;
+      resEl.innerHTML = "";
+      return;
+    }
+    statusEl.textContent = `Fant ${keys.length} treff i NB — klikk på en bok for å hente 250-ords chunks og beregne trekkvektorene:`;
+    resEl.innerHTML = keys.map((k) => {
+      const u = urnMap[k];
+      const t = (cJson.title && cJson.title[k]) || "Uten tittel";
+      const a = (cJson.authors && cJson.authors[k]) || "";
+      const y = parseInt((cJson.year && cJson.year[k]) || 0, 10) || 0;
+      const safeT = t.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+      const safeA = a.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+      return `<div style="padding:0.3rem 0;border-block-end:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
+        <span><strong>[${y || "?"}] ${t}</strong> <small style="color:var(--text-muted);">(${a})</small></span>
+        <button onclick="fetchAndProbeNbUrn('${u}', '${safeT}', '${safeA}', ${y})">Velg</button>
+      </div>`;
+    }).join("");
+  } catch (err) {
+    statusEl.textContent = "Feil ved søk mot NB API: " + err.message;
+  }
+}
+
+window.fetchAndProbeNbUrn = async function(urn, title, authors, year) {
+  const statusEl = document.getElementById("probeStatus");
+  try {
+    statusEl.textContent = `Henter 250-ords chunks for «${title}» (${urn})...`;
+    const resp = await fetch(`https://api.nb.no/dhlab/chunks?urn=${encodeURIComponent(urn)}&chunk_size=250`);
+    const chunks = await resp.json();
+    if (!Array.isArray(chunks) || chunks.length === 0) {
+      statusEl.textContent = `Ingen tekst-chunks tilgjengelig for ${urn}.`;
+      return;
+    }
+    const K = chunks.length;
+    const wPost = new Map();
+    chunks.forEach((ch) => {
+      const lc = new Map();
+      for (const [rawW, cnt] of Object.entries(ch)) {
+        const wl = String(rawW).toLowerCase();
+        lc.set(wl, (lc.get(wl) || 0) + Number(cnt));
+      }
+      lc.forEach((cnt, wl) => {
+        if (!wPost.has(wl)) wPost.set(wl, []);
+        wPost.get(wl).push(cnt);
+      });
+    });
+
+    const wordStats = new Map();
+    let docTokens = 0;
+    wPost.forEach((arr, wl) => {
+      const tot = arr.reduce((a, b) => a + b, 0);
+      if (tot < 2 || wl.length < 3) return;
+      docTokens += tot;
+      const df = arr.length;
+      const expDf = K * (1 - Math.exp(-tot / K));
+      const dfRatio = expDf > 0 ? df / expDf : 1.0;
+      const mu = tot / K;
+      const sqSum = arr.reduce((a, b) => a + b * b, 0);
+      const fano = mu > 0 ? (sqSum / K - mu * mu) / mu : 1.0;
+      wordStats.set(wl, { freq: tot, fano, dfRatio, disp: df / K });
+    });
+
+    runMultiVectorProbeAnalysis({
+      urn,
+      title,
+      authors,
+      year: year || 2000,
+      nChunks: K,
+      docTokens: Math.max(1, docTokens),
+      wordStats,
+    });
+  } catch (err) {
+    statusEl.textContent = "Feil ved henting av chunks: " + err.message;
+  }
+};
+
+function probeFromRawTextString(text, title = "Egen tekst / opplastet dokument") {
+  const tokens = (text.toLowerCase().match(/[a-zæøå]+/g) || []).filter((w) => w.length >= 2);
+  if (tokens.length < 40) {
+    document.getElementById("probeStatus").textContent = "Teksten er for kort (legg inn minst 40 ord).";
+    return;
+  }
+  const chunkSize = tokens.length < 1500 ? 100 : 250;
+  const K = Math.max(2, Math.ceil(tokens.length / chunkSize));
+  const wPost = new Map();
+  for (let k = 0; k < K; k++) {
+    const slice = tokens.slice(k * chunkSize, (k + 1) * chunkSize);
+    const lc = new Map();
+    slice.forEach((w) => lc.set(w, (lc.get(w) || 0) + 1));
+    lc.forEach((cnt, wl) => {
+      if (!wPost.has(wl)) wPost.set(wl, []);
+      wPost.get(wl).push(cnt);
+    });
+  }
+
+  const wordStats = new Map();
+  let docTokens = 0;
+  wPost.forEach((arr, wl) => {
+    const tot = arr.reduce((a, b) => a + b, 0);
+    if (tot < 2 || wl.length < 3) return;
+    docTokens += tot;
+    const df = arr.length;
+    const expDf = K * (1 - Math.exp(-tot / K));
+    const dfRatio = expDf > 0 ? df / expDf : 1.0;
+    const mu = tot / K;
+    const sqSum = arr.reduce((a, b) => a + b * b, 0);
+    const fano = mu > 0 ? (sqSum / K - mu * mu) / mu : 1.0;
+    wordStats.set(wl, { freq: tot, fano, dfRatio, disp: df / K });
+  });
+
+  runMultiVectorProbeAnalysis({
+    urn: "LOCAL:TEXT",
+    title,
+    authors: "Opplastet / innlimt",
+    year: new Date().getFullYear(),
+    nChunks: K,
+    docTokens: Math.max(1, docTokens),
+    wordStats,
+  });
+}
+
+function probeFromExistingCorpusBook(bookId) {
+  if (bookId === null || bookId === undefined || isNaN(bookId)) return;
+  const b = state.bundle.books[bookId];
+  if (!b) return;
+  const K = Math.max(5, b.n_chunks || 100);
+  const wordStats = new Map();
+  for (let idx = state.rowPtr[bookId]; idx < state.rowPtr[bookId + 1]; idx++) {
+    const wId = state.colIdx[idx];
+    const wl = state.bundle.words[wId].w;
+    const freq = state.freq[idx];
+    const fano = state.fano[idx];
+    const dfRatio = state.dfRatio[idx];
+    const expDf = K * (1 - Math.exp(-freq / K));
+    const disp = Math.min(1.0, (dfRatio * expDf) / K);
+    wordStats.set(wl, { freq, fano, dfRatio, disp });
+  }
+  runMultiVectorProbeAnalysis({
+    urn: b.urn,
+    title: b.title,
+    authors: b.authors,
+    year: b.year,
+    nChunks: K,
+    docTokens: b.doc_tokens,
+    wordStats,
+    existingBookId: bookId,
+  });
+}
+
+function runMultiVectorProbeAnalysis(doc) {
+  const statusEl = document.getElementById("probeStatus");
+  const container = document.getElementById("probeResultsContainer");
+  const nWords = state.nWords;
+  const nBooks = state.nBooks;
+  const alpha = parseFloat(document.getElementById("ppmiAlpha").value) || 0.85;
+
+  // Map korpusets ord til indeks
+  const wordToId = new Map();
+  let bgSum = 0.0;
+  const poweredBg = new Float64Array(nWords);
+  for (let w = 0; w < nWords; w++) {
+    wordToId.set(state.bundle.words[w].w, w);
+    const p = Math.pow(state.wordTfBg[w], alpha);
+    poweredBg[w] = p;
+    bgSum += p;
+  }
+  const scaleBg = bgSum * 4.5;
+
+  // Vi bygger TRE distinkte normaliserte trekkvektorer for samme bok:
+  // 1) qBurst: ren kapittel-/scene-burst (høy Fano, lav DF/E[DF])
+  // 2) qFrame: gjennomgående bakgrunnsramme / kulisse (lav Fano <= 1.35, høy spredning disp)
+  // 3) qPpmi:  global PPMI mot nb.totals (uavhengig av Fano)
+  const qBurst = new Float32Array(nWords);
+  const qFrame = new Float32Array(nWords);
+  const qPpmi  = new Float32Array(nWords);
+  const qActive = new Float32Array(nWords); // etter gjeldende venstremeny-innstilling (for SVD fold-in)
+
+  const burstWords = [];
+  const frameWords = [];
+  const ppmiWords  = [];
+
+  const log2DocLen = Math.log2(Math.max(10, doc.docTokens));
+  const minFanoSetting = parseFloat(document.getElementById("minFano").value) || 1.15;
+  const maxDfrSetting  = parseFloat(document.getElementById("maxDfRatio").value) || 0.92;
+  const activeMode     = document.getElementById("weightMode").value;
+
+  doc.wordStats.forEach((st, wl) => {
+    const wId = wordToId.get(wl);
+    if (wId === undefined) return;
+    const isStop = state.wordStop[wId] === 1;
+    const tfScale = Math.log2(1.0 + st.freq);
+    const log2Pw = Math.log2(poweredBg[wId] / scaleBg);
+    const pmi = Math.max(0.0, Math.log2(st.freq) - log2DocLen - log2Pw);
+
+    if (!isStop) {
+      // 1. Burst-vektor (Fano >= 1.28 og dfRatio <= 0.88)
+      if (st.fano >= 1.28 && st.dfRatio <= 0.88) {
+        const wBurst = tfScale * (st.fano - 1.05) * Math.max(0.1, 1.0 - st.dfRatio * 0.8);
+        qBurst[wId] = wBurst;
+        burstWords.push({ wl, ...st, score: wBurst });
+      }
+      // 2. Bakgrunnsramme-vektor (jevnt spredt: Fano <= 1.32, dfRatio >= 0.82, minst 3 forekomster)
+      if (st.fano <= 1.32 && st.dfRatio >= 0.82 && st.freq >= 3) {
+        const wFrame = tfScale * Math.max(0.4, pmi) * (0.5 + st.disp * 4.0);
+        qFrame[wId] = wFrame;
+        frameWords.push({ wl, ...st, score: wFrame });
+      }
+      // 3. Global PPMI-vektor
+      if (pmi > 0) {
+        const wPpmi = tfScale * pmi;
+        qPpmi[wId] = wPpmi;
+        ppmiWords.push({ wl, ...st, pmi, score: wPpmi });
+      }
+      // 4. Aktiv vektor for SVD-projeksjon
+      if (st.fano >= minFanoSetting && st.dfRatio <= maxDfrSetting) {
+        if (activeMode === "burst") {
+          qActive[wId] = tfScale * Math.max(0, st.fano - minFanoSetting + 0.15) * Math.max(0.05, 1.0 - st.dfRatio * 0.85);
+        } else if (activeMode === "ppmi") {
+          qActive[wId] = tfScale * pmi;
+        } else {
+          qActive[wId] = tfScale * pmi * Math.max(0, st.fano - minFanoSetting + 0.2);
+        }
+      }
+    }
+  });
+
+  const l2Norm = (vec) => {
+    let s = 0;
+    for (let i = 0; i < vec.length; i++) s += vec[i] * vec[i];
+    const inv = s > 1e-12 ? 1.0 / Math.sqrt(s) : 0.0;
+    for (let i = 0; i < vec.length; i++) vec[i] *= inv;
+  };
+  l2Norm(qBurst);
+  l2Norm(qFrame);
+  l2Norm(qPpmi);
+  l2Norm(qActive);
+
+  burstWords.sort((a, b) => b.score - a.score);
+  frameWords.sort((a, b) => b.score - a.score);
+  ppmiWords.sort((a, b) => b.score - a.score);
+
+  // Fold-in i eksisterende SVD-rom: uProj[k] = (qActive . V[k]) / sigma[k]
+  const uProj = new Float64Array(state.kDims);
+  for (let k = 0; k < state.kDims; k++) {
+    let dot = 0.0;
+    const vk = state.V[k];
+    for (let w = 0; w < nWords; w++) {
+      if (qActive[w] > 0) dot += qActive[w] * vk[w];
+    }
+    uProj[k] = dot / Math.max(1e-6, state.singularValues[k]);
+  }
+  state.probeOverlay = { title: doc.title, uProj, doc };
+  renderScatterPlot();
+
+  // Finn nærmeste nabo-bøker i korpuset langs hver av de 3 vektorene!
+  // For å sammenligne rettferdig tar vi prikkprodukt mot hver boks tilsvarende ordprofil i korpuset
+  const rankBooksForVector = (qVec, modeType) => {
+    const scores = [];
+    for (let d = 0; d < nBooks; d++) {
+      if (doc.existingBookId === d) continue;
+      let dot = 0.0;
+      let dNormSq = 0.0;
+      for (let idx = state.rowPtr[d]; idx < state.rowPtr[d + 1]; idx++) {
+        const wId = state.colIdx[idx];
+        if (state.wordStop[wId]) continue;
+        const c = state.freq[idx];
+        const fn = state.fano[idx];
+        const dfr = state.dfRatio[idx];
+        let dv = 0.0;
+        if (modeType === "burst") {
+          if (fn >= 1.28 && dfr <= 0.88) dv = Math.log2(1 + c) * (fn - 1.05);
+        } else if (modeType === "frame") {
+          if (fn <= 1.32 && dfr >= 0.82) dv = Math.log2(1 + c);
+        } else {
+          dv = state.weights[idx];
+        }
+        if (dv > 0) {
+          dNormSq += dv * dv;
+          if (qVec[wId] > 0) dot += qVec[wId] * dv;
+        }
+      }
+      const sim = dNormSq > 1e-12 ? dot / Math.sqrt(dNormSq) : 0.0;
+      scores.push({ id: d, sim });
+    }
+    scores.sort((a, b) => b.sim - a.sim);
+    return scores.slice(0, 5);
+  };
+
+  const topBurstBooks = rankBooksForVector(qBurst, "burst");
+  const topFrameBooks = rankBooksForVector(qFrame, "frame");
+  const topPpmiBooks  = rankBooksForVector(qPpmi, "ppmi");
+
+  // 4. Dekomponer boka mot Dual-Graph Galaksene (state.graphClusters)
+  const clusterHits = state.graphClusters.map((cl) => {
+    let score = 0.0;
+    const matched = [];
+    cl.members.forEach((mIdx) => {
+      const nd = state.graphNodes[mIdx];
+      const st = doc.wordStats.get(nd.word);
+      if (st) {
+        const wScore = Math.log2(1 + st.freq) * st.fano;
+        score += wScore;
+        matched.push({ word: nd.word, freq: st.freq, fano: st.fano, wScore });
+      }
+    });
+    matched.sort((a, b) => b.wScore - a.wScore);
+    return { name: cl.name, color: cl.color, score, matched, totalSize: cl.members.length };
+  }).filter((c) => c.matched.length > 0).sort((a, b) => b.score - a.score);
+
+  statusEl.innerHTML = `Analyserte <strong>«${doc.title}»</strong> (${doc.nChunks} chunks · ${doc.wordStats.size.toLocaleString("no-NO")} distinkte ord). Boka er også tegnet inn som en <strong>★ gullstjerne</strong> i <em>1. Bok-kart</em>!`;
+
+  const formatBookList = (list) => list.map((it, i) => {
+    const b = state.bundle.books[it.id];
+    const auth = b.authors ? b.authors.split("/")[0].trim() : "";
+    return `<div style="padding:0.28rem 0;border-block-end:1px solid var(--border);font-size:0.8rem;display:flex;justify-content:space-between;gap:0.4rem;">
+      <span><strong>${i + 1}. [${b.year}] ${b.title.slice(0, 46)}</strong> <small style="color:var(--text-muted);">(${auth})</small></span>
+      <span style="color:var(--accent);font-family:var(--mono);">cos=${it.sim.toFixed(3)}</span>
+    </div>`;
+  }).join("");
+
+  container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-block-bottom:0.8rem;">
+      <div>
+        <span class="tag bridge">★ Plottet i 2D Bok-kart (Fane 1)</span>
+        <span style="font-size:0.82rem;color:var(--text-muted);margin-inline-start:0.4rem;">
+          Klikk på <strong>1. Bok-kart</strong> for å se hvor «${doc.title.slice(0, 40)}» lander, eller legg den fast inn i korpuset:
+        </span>
+      </div>
+      ${doc.existingBookId === undefined ? `<button id="insertProbeBookBtn" class="primary">+ Legg denne boka inn i korpuset &amp; rekalkuler SVD</button>` : ""}
+    </div>
+
+    <div class="split-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+      <!-- VEKTOR 1: SCENE / BURST -->
+      <div class="axis-card">
+        <div class="axis-header">
+          <strong style="color:var(--pos);">1. Scene- &amp; Kapittel-burstvektor (q_burst)</strong>
+          <span class="sigma-pill">Fano ≥ 1.28</span>
+        </div>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-block-start:0;">
+          Ord som klumper seg tett i avgrensede kapitler eller scener i boka (lav DF/E[DF], høy Fano):
+        </p>
+        <div style="margin-block-end:0.6rem;">
+          ${burstWords.slice(0, 15).map((x) => `<span class="tag" title="freq=${x.freq}, Fano=${x.fano.toFixed(2)}, DF/E[DF]=${x.dfRatio.toFixed(2)}">${x.wl} <small>(${x.freq} · F:${x.fano.toFixed(1)})</small></span>`).join("") || "<em style='font-size:0.8rem;color:var(--text-muted);'>Ingen tydelige burst-ord i felles vokabular</em>"}
+        </div>
+        <div style="font-size:0.8rem;font-weight:600;margin-block-end:0.25rem;">Nærmeste bøker i korpuset langs Scene-burstvektoren:</div>
+        ${formatBookList(topBurstBooks)}
+      </div>
+
+      <!-- VEKTOR 2: BAKGRUNNSRAMME / KULISSE -->
+      <div class="axis-card">
+        <div class="axis-header">
+          <strong style="color:var(--warn);">2. Bakgrunnsramme- &amp; Kulissevektor (q_frame)</strong>
+          <span class="sigma-pill">Fano ≈ 1.0 · Høy disp</span>
+        </div>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-block-start:0;">
+          Innholdsord som drysses jevnt utover hele boka som ureflektert sjangerbakgrunn eller kulisse:
+        </p>
+        <div style="margin-block-end:0.6rem;">
+          ${frameWords.slice(0, 15).map((x) => `<span class="tag" title="freq=${x.freq}, disp=${(x.disp*100).toFixed(1)}%, Fano=${x.fano.toFixed(2)}">${x.wl} <small>(${(x.disp*100).toFixed(0)}% sider · F:${x.fano.toFixed(2)})</small></span>`).join("") || "<em style='font-size:0.8rem;color:var(--text-muted);'>Få jevnt spredte bakgrunnsord</em>"}
+        </div>
+        <div style="font-size:0.8rem;font-weight:600;margin-block-end:0.25rem;">Nærmeste bøker i korpuset langs Bakgrunnsrammen:</div>
+        ${formatBookList(topFrameBooks)}
+      </div>
+
+      <!-- VEKTOR 3: GLOBAL PPMI & SVD-AKSER -->
+      <div class="axis-card">
+        <div class="axis-header">
+          <strong style="color:var(--accent);">3. Global Sjeldenhetsvektor (q_PPMI mot nb.totals)</strong>
+          <span class="sigma-pill">PPMI_α</span>
+        </div>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-block-start:0;">
+          Ord som skiller boka sterkest fra norsk normalprosa (nb.totals), uavhengig av hvor i boka de står:
+        </p>
+        <div style="margin-block-end:0.6rem;">
+          ${ppmiWords.slice(0, 15).map((x) => `<span class="tag" title="freq=${x.freq}, PPMI=${x.pmi.toFixed(1)}">${x.wl} <small>(${x.freq} · PPMI:${x.pmi.toFixed(1)})</small></span>`).join("")}
+        </div>
+        <div style="font-size:0.8rem;font-weight:600;margin-block-end:0.25rem;">Nærmeste bøker i korpuset langs Global PPMI:</div>
+        ${formatBookList(topPpmiBooks)}
+      </div>
+
+      <!-- VEKTOR 4: DUAL-GRAPH GALAKSE-PROFIL -->
+      <div class="axis-card">
+        <div class="axis-header">
+          <strong style="color:#a78bfa;">4. Dual-Graph Galakse-profil (L(G)-klynger)</strong>
+          <span class="sigma-pill">${clusterHits.length} aktive klynger</span>
+        </div>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-block-start:0;">
+          Slik fordeler boka seg utover korpusets overlappende ordgalakser (fra Fane 3):
+        </p>
+        <div>
+          ${clusterHits.slice(0, 6).map((cl) => `
+            <div style="padding:0.32rem 0;border-block-end:1px solid var(--border);font-size:0.8rem;">
+              <div style="display:flex;justify-content:space-between;">
+                <strong style="color:${cl.color};">● ${cl.name}</strong>
+                <span style="color:var(--text-muted);">${cl.matched.length}/${cl.totalSize} ord · styrke ${cl.score.toFixed(1)}</span>
+              </div>
+              <div style="margin-block-top:0.2rem;">
+                ${cl.matched.slice(0, 8).map((m) => `<span class="tag">${m.word} (${m.freq})</span>`).join("")}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+
+  const insBtn = document.getElementById("insertProbeBookBtn");
+  if (insBtn) {
+    insBtn.addEventListener("click", () => insertCurrentProbeIntoCorpus());
+  }
+}
+
+function insertCurrentProbeIntoCorpus() {
+  if (!state.probeOverlay || !state.probeOverlay.doc) return;
+  const doc = state.probeOverlay.doc;
+  const b = state.bundle;
+  const newId = b.books.length;
+
+  const wordToId = new Map();
+  b.words.forEach((w, idx) => wordToId.set(w.w, idx));
+
+  const entries = [];
+  doc.wordStats.forEach((st, wl) => {
+    if (wordToId.has(wl)) entries.push({ wId: wordToId.get(wl), st });
+  });
+  entries.sort((a, c) => a.wId - c.wId);
+
+  b.books.push({
+    id: newId,
+    urn: doc.urn,
+    title: `★ ${doc.title}`,
+    authors: doc.authors || "",
+    year: doc.year || 2020,
+    n_chunks: doc.nChunks,
+    doc_tokens: doc.docTokens,
+  });
+
+  entries.forEach(({ wId, st }) => {
+    b.csr.col_idx.push(wId);
+    b.csr.freq.push(st.freq);
+    b.csr.fano_x100.push(Math.round(st.fano * 100));
+    b.csr.dfratio_x100.push(Math.round(st.dfRatio * 100));
+  });
+  b.csr.row_ptr.push(b.csr.col_idx.length);
+  b.meta.n_books = b.books.length;
+  b.meta.nnz = b.csr.col_idx.length;
+
+  state.selectedBookId = newId;
+  state.probeOverlay = null;
+  loadBundleIntoMemory(b);
+  recomputeAll();
+  // Bytt til Fane 1 så brukeren ser boka valgt i kartet og inspektøren
+  document.querySelector('nav.tabs button[data-tab="tab-map"]').click();
+}
+
 function bindUIEvents() {
   // Faner
   document.querySelectorAll("nav.tabs button").forEach((btn) => {
@@ -1354,7 +1873,7 @@ function bindUIEvents() {
       document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       const target = btn.getAttribute("data-tab");
-      ["tab-map", "tab-axes", "tab-galaxy", "tab-world"].forEach((id) => {
+      ["tab-map", "tab-axes", "tab-galaxy", "tab-world", "tab-probe"].forEach((id) => {
         document.getElementById(id).classList.toggle("hidden", id !== target);
       });
     });
@@ -1451,6 +1970,42 @@ function bindUIEvents() {
   document.getElementById("openApiModalBtn").addEventListener("click", () => modal.showModal());
   document.getElementById("closeApiModalBtn").addEventListener("click", () => modal.close());
   document.getElementById("runApiFetchBtn").addEventListener("click", () => runLiveApiFetch());
+
+  // Fane 5: Sjekk enkeltbok (Multi-vektor)
+  const probeNbBtn = document.getElementById("probeNbSearchBtn");
+  const probeNbInp = document.getElementById("probeNbQuery");
+  if (probeNbBtn && probeNbInp) {
+    probeNbBtn.addEventListener("click", () => probeSearchOrFetchNb());
+    probeNbInp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") probeSearchOrFetchNb();
+    });
+  }
+  const probeFileBtn = document.getElementById("probeFileBtn");
+  const probeFileInp = document.getElementById("probeFileInput");
+  if (probeFileBtn && probeFileInp) {
+    probeFileBtn.addEventListener("click", () => probeFileInp.click());
+    probeFileInp.addEventListener("change", async (e) => {
+      if (e.target.files && e.target.files[0]) {
+        const f = e.target.files[0];
+        const txt = await f.text();
+        probeFromRawTextString(txt, f.name);
+        e.target.value = "";
+      }
+    });
+  }
+  const probeCorpSel = document.getElementById("probeCorpusBookSelect");
+  if (probeCorpSel) {
+    probeCorpSel.addEventListener("change", (e) => {
+      if (e.target.value !== "") probeFromExistingCorpusBook(parseInt(e.target.value, 10));
+    });
+  }
+  const probeTextBtn = document.getElementById("probeRunTextBtn");
+  if (probeTextBtn) {
+    probeTextBtn.addEventListener("click", () => {
+      const txt = document.getElementById("probeRawText").value || "";
+      probeFromRawTextString(txt, "Innlimt tekst");
+    });
+  }
 }
 
 window.addEventListener("DOMContentLoaded", init);
