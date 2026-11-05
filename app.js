@@ -62,7 +62,7 @@ const BBI_DIVERSITY_SET = new Set([
 
 async function init() {
   bindUIEvents();
-  await fetchAndLoadPresetBundle("tvedt_bundle.json");
+  await fetchAndLoadPresetBundle("bbi_bundle.json");
 }
 
 async function fetchAndLoadPresetBundle(filename) {
@@ -155,7 +155,44 @@ function loadBundleIntoMemory(bundle) {
   document.getElementById("corpusSubtitle").textContent =
     `${bundle.meta.corpus_name} · ${state.nBooks} bøker · ${state.nWords.toLocaleString("no-NO")} ord · ${state.nnz.toLocaleString("no-NO")} par`;
 
+  updateEraBuckets(bundle.books);
   populateSelects();
+}
+
+function updateEraBuckets(books) {
+  const years = books.map((b) => b.year).filter((y) => y > 1500).sort((a, b) => a - b);
+  if (years.length === 0) {
+    state.eraCuts = [1890, 1917, 1969];
+    return;
+  }
+  const minY = years[0];
+  const maxY = years[years.length - 1];
+  if (minY >= 1995 && maxY <= 2030) {
+    state.eraCuts = [2006, 2012, 2018];
+    const leg = document.getElementById("scatterLegend");
+    if (leg) {
+      leg.innerHTML = `
+        <span><i class="legend-dot" style="background:#f472b6"></i>${minY}–2006</span>
+        <span><i class="legend-dot" style="background:#fbbf24"></i>2007–2012</span>
+        <span><i class="legend-dot" style="background:#34d399"></i>2013–2018</span>
+        <span><i class="legend-dot" style="background:#38bdf8"></i>2019–${maxY}</span>
+      `;
+    }
+  } else {
+    const q1 = years[Math.floor(years.length * 0.25)];
+    const q2 = years[Math.floor(years.length * 0.50)];
+    const q3 = years[Math.floor(years.length * 0.75)];
+    state.eraCuts = [q1, q2, q3];
+    const leg = document.getElementById("scatterLegend");
+    if (leg) {
+      leg.innerHTML = `
+        <span><i class="legend-dot" style="background:#f472b6"></i>≤ ${q1}</span>
+        <span><i class="legend-dot" style="background:#fbbf24"></i>${q1 + 1}–${q2}</span>
+        <span><i class="legend-dot" style="background:#34d399"></i>${q2 + 1}–${q3}</span>
+        <span><i class="legend-dot" style="background:#38bdf8"></i>${q3 + 1}–${maxY}</span>
+      `;
+    }
+  }
 }
 
 function populateSelects() {
@@ -401,9 +438,10 @@ function computeWeightsAndSVD() {
 // =============================================================================
 
 function getEraColor(year) {
-  if (!year || year < 1890) return "#f472b6";
-  if (year <= 1917) return "#fbbf24";
-  if (year <= 1969) return "#34d399";
+  const cuts = state.eraCuts || [2006, 2012, 2018];
+  if (!year || year <= cuts[0]) return "#f472b6";
+  if (year <= cuts[1]) return "#fbbf24";
+  if (year <= cuts[2]) return "#34d399";
   return "#38bdf8";
 }
 

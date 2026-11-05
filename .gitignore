@@ -5,3 +5,6 @@ __pycache__/
 data/*.parquet
 data/*.npz
 data/*.npy
+tvedt_bundle.json
+vann.csv
+data/historieverk_identifier_mapping.csv
