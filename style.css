@@ -1,0 +1,444 @@
+:root {
+  --bg: #0f172a;
+  --bg-panel: #1e293b;
+  --bg-card: #263349;
+  --border: #334155;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --accent: #38bdf8;
+  --accent-hover: #0ea5e9;
+  --pos: #34d399;
+  --neg: #f87171;
+  --warn: #fbbf24;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+header.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  background: var(--bg-panel);
+  border-block-end: 1px solid var(--border);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.brand p {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.perf-badge {
+  font-size: 0.8rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  color: var(--pos);
+  font-variant-numeric: tabular-nums;
+}
+
+button, select, input[type="text"], input[type="number"] {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.42rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #082f49;
+  border-color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.primary:hover {
+  background: var(--accent-hover);
+}
+
+.app-layout {
+  display: grid;
+  grid-template-columns: 310px 1fr;
+  min-block-size: calc(100dvh - 64px);
+}
+
+@media (max-width: 960px) {
+  .app-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+aside.controls {
+  background: var(--bg-panel);
+  border-inline-end: 1px solid var(--border);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.control-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.control-group h2 {
+  margin: 0 0 0.55rem;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-block-end: 0.65rem;
+}
+
+.slider-row:last-child {
+  margin-block-end: 0;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+}
+
+.slider-label span.val {
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="range"] {
+  inline-size: 100%;
+  accent-color: var(--accent);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.83rem;
+  margin-block-top: 0.4rem;
+  cursor: pointer;
+}
+
+main.workspace {
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-x: hidden;
+}
+
+nav.tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  border-block-end: 1px solid var(--border);
+  padding-block-end: 0.65rem;
+}
+
+nav.tabs button {
+  cursor: pointer;
+  padding: 0.48rem 0.9rem;
+  font-weight: 500;
+  border-radius: 6px;
+}
+
+nav.tabs button.active {
+  background: var(--accent);
+  color: #082f49;
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+/* Containment regions per modern-web-guidance (interactions-in-complex-layouts) */
+.board-column {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px auto 640px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+@supports not (content-visibility: auto) {
+  .board-column {
+    contain: layout style paint;
+  }
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 1100px) {
+  .split-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.canvas-box {
+  position: relative;
+  background: #0b1120;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  inline-size: 100%;
+  block-size: 520px;
+  cursor: grab;
+}
+
+canvas:active {
+  cursor: grabbing;
+}
+
+.canvas-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-block-end: 0.65rem;
+}
+
+.legend {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.legend-dot {
+  display: inline-block;
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 50%;
+  margin-inline-end: 4px;
+}
+
+.axis-card, .cluster-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  margin-block-end: 0.75rem;
+}
+
+.axis-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-block-end: 0.45rem;
+  font-weight: 600;
+}
+
+.pole-row {
+  font-size: 0.83rem;
+  margin: 0.25rem 0;
+}
+
+.pole-pos {
+  color: var(--pos);
+  font-weight: 600;
+}
+
+.pole-neg {
+  color: var(--neg);
+  font-weight: 600;
+}
+
+.tag {
+  display: inline-block;
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 0.1rem 0.42rem;
+  margin: 0.12rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.tag:hover {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+.tag.bridge {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: var(--warn);
+}
+
+/* Responsive table per modern-web-guidance (responsive-table) */
+.table-wrapper {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(620px, 75vh);
+  container-type: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+table {
+  inline-size: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.84rem;
+}
+
+caption {
+  text-align: start;
+  padding: 0.6rem 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg-panel);
+}
+
+thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+}
+
+thead th {
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 0.55rem 0.75rem;
+  text-align: start;
+  border-block-end: 1px solid var(--border);
+}
+
+tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  background: var(--bg-panel);
+  padding: 0.5rem 0.75rem;
+  text-align: start;
+  font-weight: 600;
+  border-block-end: 1px solid var(--border);
+}
+
+tbody td {
+  padding: 0.5rem 0.75rem;
+  border-block-end: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+tbody tr:hover td, tbody tr:hover th {
+  background: var(--bg-card);
+}
+
+@container (width < 600px) {
+  table, thead, tbody, tr, th, td {
+    display: block;
+  }
+
+  thead {
+    display: none;
+  }
+
+  tr {
+    margin-block-end: 1rem;
+    border: 1px solid var(--border);
+  }
+
+  tbody th {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 2;
+    background: var(--bg-card);
+  }
+
+  table {
+    --label-2: "Bøker";
+    --label-3: "Frekvens";
+    --label-4: "Median disp";
+    --label-5: "DF / E[DF]";
+    --label-6: "Median Fano";
+    --label-7: "Oppførsel";
+  }
+
+  td:nth-child(2)::before { content: var(--label-2) ": "; color: var(--text-muted); }
+  td:nth-child(3)::before { content: var(--label-3) ": "; color: var(--text-muted); }
+  td:nth-child(4)::before { content: var(--label-4) ": "; color: var(--text-muted); }
+  td:nth-child(5)::before { content: var(--label-5) ": "; color: var(--text-muted); }
+  td:nth-child(6)::before { content: var(--label-6) ": "; color: var(--text-muted); }
+  td:nth-child(7)::before { content: var(--label-7) ": "; color: var(--text-muted); }
+}
+
+dialog {
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  max-inline-size: 540px;
+  inline-size: 92%;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin: 0.85rem 0;
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.hidden {
+  display: none !important;
+}

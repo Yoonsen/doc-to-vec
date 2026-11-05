@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Doc2Vec · PPMI, Chunk-Burstiness & Dual-Graph Galakser</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Doc2Vec · PPMI, Chunk-Burstiness &amp; Ordgalakser</h1>
+      <p id="corpusSubtitle">Laster Terje Tvedt-korpuset (352 bøker)...</p>
+    </div>
+    <div class="top-actions">
+      <span id="perfBadge" class="perf-badge">SVD: -- ms</span>
+      <button id="openApiModalBtn" class="primary">Hent nytt korpus fra NB API</button>
+    </div>
+  </header>
+
+  <div class="app-layout">
+    <aside class="controls">
+      <div class="control-group">
+        <h2>1. Vektingsmodell</h2>
+        <div class="slider-row">
+          <label class="slider-label" for="weightMode">Mål for dokument × ord</label>
+          <select id="weightMode">
+            <option value="hybrid">Hybrid (PPMI × Chunk-Burstiness)</option>
+            <option value="burst" selected>Ren Chunk-Burstiness (uten nb.totals)</option>
+            <option value="ppmi">Global PPMI (mot nb.totals 500k)</option>
+          </select>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="filterStop" checked />
+          <span>Filtrer funksjonsord &amp; paratekst</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="sublinearTf" checked />
+          <span>Log-TF skalering: log₂(1 + freq)</span>
+        </label>
+      </div>
+
+      <div class="control-group">
+        <h2>2. Chunk-Burstiness &amp; PMI</h2>
+        <div class="slider-row">
+          <div class="slider-label">
+            <label for="minFano">Min. Fano-faktor (σ²/μ)</label>
+            <span id="minFanoVal" class="val">1.15</span>
+          </div>
+          <input type="range" id="minFano" min="0.80" max="2.50" step="0.05" value="1.15" />
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-label">
+            <label for="maxDfRatio">Maks. spredning (DF / E[DF])</label>
+            <span id="maxDfRatioVal" class="val">0.92</span>
+          </div>
+          <input type="range" id="maxDfRatio" min="0.45" max="1.00" step="0.02" value="0.92" />
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-label">
+            <label for="ppmiAlpha">PPMI α-eksponent (bakgrunn)</label>
+            <span id="ppmiAlphaVal" class="val">0.85</span>
+          </div>
+          <input type="range" id="ppmiAlpha" min="0.60" max="1.00" step="0.05" value="0.85" />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>3. Ord-mot-ord Graf &amp; Dual L(G)</h2>
+        <div class="slider-row">
+          <div class="slider-label">
+            <label for="graphTopWords">Antall topp-ord i grafen</label>
+            <span id="graphTopWordsVal" class="val">220</span>
+          </div>
+          <input type="range" id="graphTopWords" min="80" max="400" step="20" value="220" />
+        </div>
+        <div class="slider-row">
+          <div class="slider-label">
+            <label for="graphTopK">Topp-k kanter per ord</label>
+            <span id="graphTopKVal" class="val">7</span>
+          </div>
+          <input type="range" id="graphTopK" min="3" max="12" step="1" value="7" />
+        </div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <nav class="tabs" role="tablist">
+        <button class="active" data-tab="tab-map">1. Bok-kart &amp; Nærmeste Naboer</button>
+        <button data-tab="tab-axes">2. SVD-Akser (U og V)</button>
+        <button data-tab="tab-galaxy">3. Ord-mot-ord Galakse &amp; Dual-Graph</button>
+        <button data-tab="tab-world">4. «Norge vs. Verden» &amp; Begrepstabell</button>
+      </nav>
+
+      <!-- TAB 1: BOK-KART -->
+      <section id="tab-map" class="split-grid">
+        <div class="board-column">
+          <div class="canvas-toolbar">
+            <div>
+              <label for="axisXSelect">X-akse:</label>
+              <select id="axisXSelect"></select>
+              <label for="axisYSelect" style="margin-inline-start:0.5rem;">Y-akse:</label>
+              <select id="axisYSelect"></select>
+            </div>
+            <div class="legend">
+              <span><i class="legend-dot" style="background:#f472b6"></i>&lt; 1890</span>
+              <span><i class="legend-dot" style="background:#fbbf24"></i>1890–1917</span>
+              <span><i class="legend-dot" style="background:#34d399"></i>1918–1969</span>
+              <span><i class="legend-dot" style="background:#38bdf8"></i>1970–2015</span>
+            </div>
+          </div>
+          <div class="canvas-box">
+            <canvas id="scatterCanvas" width="760" height="520"></canvas>
+          </div>
+        </div>
+
+        <div class="board-column">
+          <div style="margin-block-end: 0.65rem;">
+            <label for="bookSelect" style="font-size:0.82rem;color:var(--text-muted);">Velg bok (eller klikk i plottet):</label>
+            <select id="bookSelect" style="inline-size:100%;margin-block-top:0.25rem;"></select>
+          </div>
+          <div id="bookInspector"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: SVD-AKSER -->
+      <section id="tab-axes" class="board-column hidden">
+        <h3 style="margin-block-start:0;">De første 10 SVD-dimensjonene (M ≈ U_k Σ_k V_k^T)</h3>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-block-end:1rem;">
+          Hver akse viser de mest utslagsgivende ordene i <code>V_k</code> og bøkene i <code>U_k</code> for valgt vektingsmodell. Klikk på et ord for å hoppe til begrepstabellen.
+        </p>
+        <div id="axesContainer"></div>
+      </section>
+
+      <!-- TAB 3: ORD-GALAKSE & DUAL GRAPH -->
+      <section id="tab-galaxy" class="split-grid hidden">
+        <div class="board-column">
+          <div class="canvas-toolbar">
+            <div>
+              <strong>Ord-mot-ord dot-produkt (M^T M) + Linjegraf L(G)</strong>
+            </div>
+            <div>
+              <input type="text" id="galaxySearch" placeholder="Finn ord i grafen..." />
+              <button id="reLayoutBtn">Nytt oppsett</button>
+            </div>
+          </div>
+          <div class="canvas-box">
+            <canvas id="galaxyCanvas" width="760" height="520"></canvas>
+          </div>
+        </div>
+
+        <div class="board-column">
+          <h3 style="margin-block-start:0;font-size:1rem;">Overlappsklynger &amp; Bro-ord (Dual-Graph)</h3>
+          <div id="clustersContainer" style="max-block-size:500px;overflow-y:auto;"></div>
+        </div>
+      </section>
+
+      <!-- TAB 4: NORGE VS VERDEN & BEGREPSTABELL -->
+      <section id="tab-world" class="board-column hidden">
+        <div class="canvas-toolbar">
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+            <label for="presetFilter">Utvalg:</label>
+            <select id="presetFilter">
+              <option value="countries" selected>Land &amp; Regioner («Tvedt-testen»)</option>
+              <option value="top_burst">Topp 150 mest bursty innholdsord</option>
+              <option value="even_bg">Mest jevnt fordelte bakgrunnsord (lav Fano)</option>
+              <option value="all">Alle ord i vokabularet (søk)</option>
+            </select>
+            <input type="text" id="wordTableSearch" placeholder="Søk etter ord (f.eks. europa, selveie, kina)..." />
+          </div>
+        </div>
+
+        <div tabindex="0" role="region" aria-labelledby="burst-table-caption" class="table-wrapper">
+          <table>
+            <caption id="burst-table-caption">Ord-oppførsel på tvers av bøkene og 300-ords chunks</caption>
+            <thead>
+              <tr>
+                <th>Ord</th>
+                <th>Antall bøker</th>
+                <th>Total frekvens</th>
+                <th>Median disp (andel sider)</th>
+                <th>Median DF / E[DF]</th>
+                <th>Median Fano (σ²/μ)</th>
+                <th>Tekstlig oppførsel</th>
+              </tr>
+            </thead>
+            <tbody id="wordTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODAL FOR DIREKTE HENTING FRA NB API I NETTLESEREN -->
+  <dialog id="apiModal">
+    <h3 style="margin-block-start:0;">Hent nytt korpus direkte i nettleseren (api.nb.no/dhlab)</h3>
+    <p style="font-size:0.84rem;color:var(--text-muted);">
+      DHlab-API-et støtter CORS direkte fra nettleseren. Du kan bygge et korpus og hente bokfrekvenser (<code>cutoff=5</code>) eller 300-ords chunks her og nå:
+    </p>
+    <div class="form-grid">
+      <label>Emne / nøkkelord (subject)
+        <input type="text" id="apiSubject" value="historie" />
+      </label>
+      <label>Forfatter (author)
+        <input type="text" id="apiAuthor" placeholder="f.eks. Sars eller Steen" />
+      </label>
+      <label>Tittel inneholder (title)
+        <input type="text" id="apiTitle" placeholder="f.eks. Norges" />
+      </label>
+      <label>Antall bøker (limit)
+        <input type="number" id="apiLimit" value="60" min="10" max="350" />
+      </label>
+      <label>Fra år
+        <input type="number" id="apiFromYear" value="1850" />
+      </label>
+      <label>Til år
+        <input type="number" id="apiToYear" value="2020" />
+      </label>
+    </div>
+    <label class="checkbox-row" style="margin-block-bottom:0.85rem;">
+      <input type="checkbox" id="apiFetchChunks" />
+      <span>Hent også 300-ords chunks per bok (beregner eksakt Fano-burstiness i nettleseren)</span>
+    </label>
+    <div id="apiProgress" style="font-size:0.83rem;color:var(--accent);margin-block-end:0.85rem;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:0.5rem;">
+      <button id="closeApiModalBtn">Lukk</button>
+      <button id="runApiFetchBtn" class="primary">Hent fra NB API &amp; beregn SVD</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
