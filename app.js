@@ -60,9 +60,20 @@ const BBI_DIVERSITY_SET = new Set([
   "flukt", "flykte", "flykter", "flyktet", "hudfarge", "mørkhudet", "mørkhudede", "rasisme", "rasist", "rasister", "rasistisk"
 ]);
 
+const FOOD_SET = new Set([
+  "salt", "pepper", "smør", "sukker", "vann", "mel", "hvetemel", "egg", "melk", "fløte", "olje", "olivenolje",
+  "løk", "hvitløk", "poteter", "potet", "tomater", "tomat", "ost", "fisk", "torsk", "laks", "sild", "lutefisk",
+  "klippfisk", "reker", "krabbe", "blåskjell", "kjøtt", "oksekjøtt", "svinekjøtt", "lam", "lammekjøtt", "fårikål",
+  "pinnekjøtt", "ribbe", "elg", "hjort", "rein", "rype", "kylling", "kalkun", "pølser", "kjøttkaker", "kraft",
+  "buljong", "suppe", "saus", "brød", "deig", "deigen", "gjær", "surdeig", "kake", "kaker", "sjokolade", "krem",
+  "mandler", "marsipan", "is", "bær", "jordbær", "epler", "sitron", "ingefær", "chili", "karri", "koriander",
+  "basilikum", "timian", "persille", "kanel", "kardemomme", "vanilje", "soyasaus", "ris", "pasta", "spaghetti",
+  "pizza", "vin", "rødvin", "hvitvin", "øl", "malt", "humle", "akevitt", "kaffe", "ovn", "ovnen", "stekeovn"
+]);
+
 async function init() {
   bindUIEvents();
-  await fetchAndLoadPresetBundle("bbi_bundle.json");
+  await fetchAndLoadPresetBundle("mat_bundle.json");
 }
 
 async function fetchAndLoadPresetBundle(filename) {
@@ -73,9 +84,12 @@ async function fetchAndLoadPresetBundle(filename) {
     const bundle = await resp.json();
     state.selectedBookId = 0;
     loadBundleIntoMemory(bundle);
-    // Sett passende standard-filter i fane 4
     const pf = document.getElementById("presetFilter");
-    if (pf) pf.value = filename.includes("bbi") ? "bbi_diversity" : "countries";
+    if (pf) {
+      if (filename.includes("mat")) pf.value = "food";
+      else if (filename.includes("bbi")) pf.value = "bbi_diversity";
+      else pf.value = "countries";
+    }
     recomputeAll();
   } catch (err) {
     document.getElementById("corpusSubtitle").textContent =
@@ -94,6 +108,14 @@ async function handleLocalBundleUpload(file) {
     }
     state.selectedBookId = 0;
     loadBundleIntoMemory(bundle);
+    const pf = document.getElementById("presetFilter");
+    if (pf) {
+      const fn = file.name.toLowerCase();
+      if (fn.includes("bbi")) pf.value = "bbi_diversity";
+      else if (fn.includes("tvedt") || fn.includes("vann")) pf.value = "countries";
+      else if (fn.includes("mat")) pf.value = "food";
+      else pf.value = "top_burst";
+    }
     recomputeAll();
   } catch (err) {
     alert("Kunne ikke lese JSON-bundle: " + err.message);
@@ -1078,6 +1100,9 @@ function renderWordTable() {
   let list = state.bundle.words.slice();
   if (q) {
     list = list.filter((x) => x.w.includes(q));
+  } else if (preset === "food") {
+    list = list.filter((x) => FOOD_SET.has(x.w));
+    list.sort((a, b) => b.cf - a.cf);
   } else if (preset === "countries") {
     list = list.filter((x) => COUNTRIES_SET.has(x.w));
     list.sort((a, b) => b.cf - a.cf);

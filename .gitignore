@@ -6,5 +6,10 @@ data/*.parquet
 data/*.npz
 data/*.npy
 tvedt_bundle.json
+bbi_bundle.json
 vann.csv
 data/historieverk_identifier_mapping.csv
+dh2027_abstract_draft.md
+export_bbi_bundle.py
+fetch_bbi_burstiness.py
+analyze_bbi_burstiness_and_graphs.py

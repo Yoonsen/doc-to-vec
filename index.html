@@ -10,7 +10,7 @@
   <header class="topbar">
     <div class="brand">
       <h1>Doc2Vec · PPMI, Chunk-Burstiness &amp; Ordgalakser</h1>
-      <p id="corpusSubtitle">Laster BBI-korpuset (1 794 bøker)...</p>
+      <p id="corpusSubtitle">Laster Norske kokebøker &amp; matkultur (DDK 641)...</p>
     </div>
     <div class="top-actions">
       <span id="perfBadge" class="perf-badge">SVD: -- ms</span>
@@ -166,10 +166,11 @@
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
             <label for="presetFilter">Utvalg:</label>
             <select id="presetFilter">
-              <option value="bbi_diversity" selected>BBI Mangfoldsord (religion, funksjon, skeiv, samisk, flukt)</option>
-              <option value="countries">Land &amp; Regioner (geografisk spredning vs. burst)</option>
+              <option value="food" selected>Mat &amp; Råvarer (basisord som salt/smør vs. tematiske kapitler)</option>
               <option value="top_burst">Topp 150 mest bursty innholdsord</option>
               <option value="even_bg">Mest jevnt fordelte bakgrunnsord (lav Fano)</option>
+              <option value="countries">Land &amp; Regioner (geografisk spredning vs. burst)</option>
+              <option value="bbi_diversity">Mangfoldsord (religion, funksjon, skeiv, samisk, flukt)</option>
               <option value="all">Alle ord i vokabularet (søk)</option>
             </select>
             <input type="text" id="wordTableSearch" placeholder="Søk etter ord (f.eks. europa, selveie, kina)..." />
