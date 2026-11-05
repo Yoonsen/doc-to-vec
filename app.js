@@ -71,6 +71,18 @@ const FOOD_SET = new Set([
   "pizza", "vin", "rødvin", "hvitvin", "øl", "malt", "humle", "akevitt", "kaffe", "ovn", "ovnen", "stekeovn"
 ]);
 
+const WESTERN_SET = new Set([
+  "kane", "morgan", "kanes", "marshal", "stjernen", "revolver", "revolveren", "colt", "colten", "winchester",
+  "gevær", "rifle", "hagle", "hylsteret", "avtrekkeren", "kulen", "kuler", "skudd", "krutt", "dynamitt",
+  "hest", "hesten", "hestene", "salen", "sporene", "kjerra", "vogna", "diligencen", "toget", "lokomotivet",
+  "saloon", "saloonen", "bardisken", "bartenderen", "whisky", "tequila", "øl", "glass", "flaske", "sigar",
+  "poker", "kortene", "potten", "rulett", "dollar", "gull", "sølv", "banken", "pengeskapet",
+  "sheriff", "sheriffen", "dommeren", "juryen", "retten", "fengsel", "cellen", "galgen", "løkken", "lovløs", "dusør", "pinkerton",
+  "mexico", "mexicanske", "mexicanere", "gringo", "texas", "arizona", "sonora", "durango",
+  "indianere", "indianerne", "apache", "apachene", "comanche", "høvdingen", "kavaleriet", "fortet", "obersten", "generalen", "soldatene",
+  "ørkenen", "prærien", "canyon", "leirbålet", "kveg", "ranchen", "cowboy", "linda", "jesse", "rawson", "custer"
+]);
+
 async function init() {
   bindUIEvents();
   await fetchAndLoadPresetBundle("mat_bundle.json");
@@ -87,7 +99,7 @@ async function fetchAndLoadPresetBundle(filename) {
     const pf = document.getElementById("presetFilter");
     if (pf) {
       if (filename.includes("mat")) pf.value = "food";
-      else if (filename.includes("bbi")) pf.value = "bbi_diversity";
+      else if (filename.includes("kane")) pf.value = "western";
       else pf.value = "countries";
     }
     recomputeAll();
@@ -1102,6 +1114,9 @@ function renderWordTable() {
     list = list.filter((x) => x.w.includes(q));
   } else if (preset === "food") {
     list = list.filter((x) => FOOD_SET.has(x.w));
+    list.sort((a, b) => b.cf - a.cf);
+  } else if (preset === "western") {
+    list = list.filter((x) => WESTERN_SET.has(x.w));
     list.sort((a, b) => b.cf - a.cf);
   } else if (preset === "countries") {
     list = list.filter((x) => COUNTRIES_SET.has(x.w));

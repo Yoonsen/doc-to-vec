@@ -14,6 +14,11 @@
     </div>
     <div class="top-actions">
       <span id="perfBadge" class="perf-badge">SVD: -- ms</span>
+      <label for="presetBundleSelect" style="font-size:0.8rem;color:var(--text-muted);">Korpus:</label>
+      <select id="presetBundleSelect" aria-label="Velg innebygd korpus-bundle">
+        <option value="mat_bundle.json" selected>Mat &amp; Drikke: Kokebøker DDK 641 (338 bøker)</option>
+        <option value="kane_bundle.json">Morgan Kane / Louis Masterson (255 westernbøker)</option>
+      </select>
       <input type="file" id="uploadBundleInput" accept=".json,application/json" hidden />
       <button id="uploadBundleBtn" title="Last opp en lokal .json bundle-fil fra disk (eller dra og slipp filen i vinduet)">Last opp .json</button>
       <button id="downloadBundleBtn" title="Last ned aktivt korpus som .json bundle">Last ned .json</button>
@@ -166,11 +171,11 @@
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
             <label for="presetFilter">Utvalg:</label>
             <select id="presetFilter">
-              <option value="food" selected>Mat &amp; Råvarer (basisord som salt/smør vs. tematiske kapitler)</option>
+              <option value="food" selected>Mat &amp; Drikke (basisord som salt/smør vs. tematiske kapitler)</option>
+              <option value="western">Morgan Kane &amp; Western (revolver/saloon vs. tog/kavaleri/rettssak)</option>
               <option value="top_burst">Topp 150 mest bursty innholdsord</option>
               <option value="even_bg">Mest jevnt fordelte bakgrunnsord (lav Fano)</option>
               <option value="countries">Land &amp; Regioner (geografisk spredning vs. burst)</option>
-              <option value="bbi_diversity">Mangfoldsord (religion, funksjon, skeiv, samisk, flukt)</option>
               <option value="all">Alle ord i vokabularet (søk)</option>
             </select>
             <input type="text" id="wordTableSearch" placeholder="Søk etter ord (f.eks. europa, selveie, kina)..." />
