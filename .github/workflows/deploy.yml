@@ -24,7 +24,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html app.js style.css tvedt_bundle.json _site/
+          cp index.html app.js style.css mat_bundle.json kane_bundle.json _site/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
