@@ -14,7 +14,15 @@
     </div>
     <div class="top-actions">
       <span id="perfBadge" class="perf-badge">SVD: -- ms</span>
-      <button id="openApiModalBtn" class="primary">Hent nytt korpus fra NB API</button>
+      <label for="presetBundleSelect" style="font-size:0.8rem;color:var(--text-muted);">Korpus:</label>
+      <select id="presetBundleSelect" aria-label="Velg innebygd korpus-bundle">
+        <option value="tvedt_bundle.json" selected>Tvedt: Historieverk 1753–2015 (352 bøker)</option>
+        <option value="bbi_bundle.json">BBI: Barne- og ungdomsbøker 2000–2024 (1 794 bøker)</option>
+      </select>
+      <input type="file" id="uploadBundleInput" accept=".json,application/json" hidden />
+      <button id="uploadBundleBtn" title="Last opp en lokal .json bundle-fil fra disk (eller dra og slipp filen i vinduet)">Last opp .json</button>
+      <button id="downloadBundleBtn" title="Last ned aktivt korpus som .json bundle">Last ned .json</button>
+      <button id="openApiModalBtn" class="primary">Bygg fra NB API</button>
     </div>
   </header>
 
@@ -164,6 +172,7 @@
             <label for="presetFilter">Utvalg:</label>
             <select id="presetFilter">
               <option value="countries" selected>Land &amp; Regioner («Tvedt-testen»)</option>
+              <option value="bbi_diversity">BBI Mangfoldsord (religion, funksjon, skeiv, samisk, flukt)</option>
               <option value="top_burst">Topp 150 mest bursty innholdsord</option>
               <option value="even_bg">Mest jevnt fordelte bakgrunnsord (lav Fano)</option>
               <option value="all">Alle ord i vokabularet (søk)</option>

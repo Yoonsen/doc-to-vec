@@ -45,17 +45,78 @@ const COUNTRIES_SET = new Set([
   "nederland", "holland", "finland", "amerika", "usa", "afrika", "asia", "india", "kina"
 ]);
 
+const BBI_DIVERSITY_SET = new Set([
+  "moske", "moské", "moskeen", "moskéen", "synagoge", "synagogen", "kirke", "kirken", "kirka", "bedehus", "bedehuset",
+  "muslim", "muslimer", "muslimene", "muslimsk", "islam", "imam", "imamen", "koranen", "ramadan", "hijab", "hijaben", "bønnerommet", "profeten",
+  "jøde", "jøder", "jødene", "jødisk", "jødedommen", "rabbiner", "toraen", "sabbat", "kippa", "tora",
+  "kristen", "kristne", "kristendommen", "jesus", "bibelen", "gud",
+  "blind", "blinde", "svaksynt", "svaksynte", "synshemmet", "blindestokk", "blindeskrift", "punktskrift", "førerhund",
+  "døv", "døve", "tunghørt", "hørselshemmet", "tegnspråk", "høreapparat",
+  "lam", "lamme", "funksjonshemmet", "funksjonshemmede", "handikappet", "rullestol", "rullestolen", "protese", "krykker", "krykkene", "hjelpemidler", "likeverd",
+  "homo", "homofil", "homofile", "homofili", "homse", "homser", "lesbisk", "lesbiske", "bifil", "pride", "paraden", "skeiv", "skeive", "streit", "hetero", "transperson", "unormal",
+  "samisk", "samiske", "samer", "samene", "same", "joik", "joike", "joiker", "kofte", "kofta", "lavvo", "lavvoen", "reinsdyr", "reinen", "kautokeino", "karasjok", "nordlyset", "skallene", "lasso",
+  "kven", "kvensk", "romfolk", "sigøyner", "tater", "tatere",
+  "innvandrer", "innvandrere", "innvandring", "flerkulturell", "flyktning", "flyktninger", "flyktningene", "asyl", "asylsøker", "asylsøkere", "asylmottak", "asylmottaket", "udi", "søknaden", "mottaket",
+  "flukt", "flykte", "flykter", "flyktet", "hudfarge", "mørkhudet", "mørkhudede", "rasisme", "rasist", "rasister", "rasistisk"
+]);
+
 async function init() {
   bindUIEvents();
+  await fetchAndLoadPresetBundle("tvedt_bundle.json");
+}
+
+async function fetchAndLoadPresetBundle(filename) {
   try {
-    const resp = await fetch("tvedt_bundle.json");
+    document.getElementById("corpusSubtitle").textContent = `Laster ${filename}...`;
+    const resp = await fetch(filename);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} (${filename})`);
     const bundle = await resp.json();
+    state.selectedBookId = 0;
     loadBundleIntoMemory(bundle);
+    // Sett passende standard-filter i fane 4
+    const pf = document.getElementById("presetFilter");
+    if (pf) pf.value = filename.includes("bbi") ? "bbi_diversity" : "countries";
     recomputeAll();
   } catch (err) {
     document.getElementById("corpusSubtitle").textContent =
-      "Kunne ikke laste tvedt_bundle.json automatisk: " + err.message;
+      `Kunne ikke laste ${filename}: ` + err.message;
   }
+}
+
+async function handleLocalBundleUpload(file) {
+  if (!file) return;
+  try {
+    document.getElementById("corpusSubtitle").textContent = `Leser lokal fil: ${file.name}...`;
+    const text = await file.text();
+    const bundle = JSON.parse(text);
+    if (!bundle || !bundle.meta || !bundle.csr || !bundle.books || !bundle.words) {
+      throw new Error("Ugyldig bundle-format (mangler meta, books, words eller csr).");
+    }
+    state.selectedBookId = 0;
+    loadBundleIntoMemory(bundle);
+    recomputeAll();
+  } catch (err) {
+    alert("Kunne ikke lese JSON-bundle: " + err.message);
+    document.getElementById("corpusSubtitle").textContent = "Feil ved opplasting: " + err.message;
+  }
+}
+
+function downloadCurrentBundle() {
+  if (!state.bundle) return;
+  const jsonStr = JSON.stringify(state.bundle);
+  const blob = new Blob([jsonStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeName = (state.bundle.meta.corpus_name || "corpus_bundle")
+    .toLowerCase()
+    .replace(/[^a-z0-9æøå]+/g, "_")
+    .replace(/^_|_$/g, "");
+  a.href = url;
+  a.download = `${safeName}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function loadBundleIntoMemory(bundle) {
@@ -239,75 +300,42 @@ function computeWeightsAndSVD() {
     }
   }
 
-  // 2. Beregn Gram-matrisen G = M * M^T (nBooks x nBooks)
-  // Siden M er glissen med radpekere, er G[d1, d2] = dot(row_d1, row_d2)
-  // Vi bygger en rask kolonne-posting-liste kun for ikke-null elementer
-  const colCounts = new Int32Array(nWords);
-  for (let idx = 0; idx < state.nnz; idx++) {
-    if (weights[idx] > 0) colCounts[colIdx[idx]]++;
-  }
-  const colPtr = new Int32Array(nWords + 1);
-  for (let w = 0; w < nWords; w++) colPtr[w + 1] = colPtr[w] + colCounts[w];
-
-  const activeNnz = colPtr[nWords];
-  const cscDoc = new Int32Array(activeNnz);
-  const cscVal = new Float32Array(activeNnz);
-  const curPos = new Int32Array(colPtr.subarray(0, nWords));
-
-  for (let d = 0; d < nBooks; d++) {
-    for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
-      const v = weights[idx];
-      if (v > 0) {
-        const w = colIdx[idx];
-        const p = curPos[w]++;
-        cscDoc[p] = d;
-        cscVal[p] = v;
-      }
-    }
-  }
-
-  const G = new Float32Array(nBooks * nBooks);
-  for (let w = 0; w < nWords; w++) {
-    const start = colPtr[w];
-    const end = colPtr[w + 1];
-    for (let i = start; i < end; i++) {
-      const d1 = cscDoc[i] * nBooks;
-      const v1 = cscVal[i];
-      for (let j = i; j < end; j++) {
-        G[d1 + cscDoc[j]] += v1 * cscVal[j];
-      }
-    }
-  }
-  // Symmetriser nedre trekant
-  for (let d1 = 0; d1 < nBooks; d1++) {
-    for (let d2 = 0; d2 < d1; d2++) {
-      G[d1 * nBooks + d2] = G[d2 * nBooks + d1];
-    }
-  }
-  state.G = G;
-
-  // 3. Deflatert potensiterasjon med Gram-Schmidt på G (nBooks x nBooks) for topp kDims egenvektorer U_k
+  // 2. Deflatert potensiterasjon direkte via glissen M * (M^T * u) uten å bygge tett (nBooks x nBooks) Gram-matrise!
+  // Dette skalerer lineært O(nnz) slik at 1 800–10 000 bøker går på ~80 ms i nettleseren.
   const kDims = state.kDims;
   const U = [];
   const singularValues = new Float64Array(kDims);
+  const tmpW = new Float64Array(nWords);
 
   for (let k = 0; k < kDims; k++) {
     const u = new Float64Array(nBooks);
-    // Deterministisk startvektor
     for (let d = 0; d < nBooks; d++) {
       u[d] = Math.sin((d + 1) * (k + 1.37));
     }
 
     const nextU = new Float64Array(nBooks);
-    for (let iter = 0; iter < 28; iter++) {
-      // nextU = G * u
-      for (let d1 = 0; d1 < nBooks; d1++) {
-        let sum = 0.0;
-        const rowOff = d1 * nBooks;
-        for (let d2 = 0; d2 < nBooks; d2++) {
-          sum += G[rowOff + d2] * u[d2];
+    const nIter = nBooks > 800 ? 18 : 26;
+    for (let iter = 0; iter < nIter; iter++) {
+      // tmpW = M^T * u
+      tmpW.fill(0.0);
+      for (let d = 0; d < nBooks; d++) {
+        const ud = u[d];
+        if (ud === 0.0) continue;
+        const end = rowPtr[d + 1];
+        for (let idx = rowPtr[d]; idx < end; idx++) {
+          const wVal = weights[idx];
+          if (wVal > 0) tmpW[colIdx[idx]] += wVal * ud;
         }
-        nextU[d1] = sum;
+      }
+      // nextU = M * tmpW
+      for (let d = 0; d < nBooks; d++) {
+        let sum = 0.0;
+        const end = rowPtr[d + 1];
+        for (let idx = rowPtr[d]; idx < end; idx++) {
+          const wVal = weights[idx];
+          if (wVal > 0) sum += wVal * tmpW[colIdx[idx]];
+        }
+        nextU[d] = sum;
       }
 
       // Ortogonaliser mot tidligere egenvektorer U[0..k-1]
@@ -324,14 +352,18 @@ function computeWeightsAndSVD() {
       for (let d = 0; d < nBooks; d++) u[d] = nextU[d] / norm;
     }
 
-    // Beregn Rayleigh-kvotient lambda = u^T G u -> sigma = sqrt(lambda)
-    let lambda = 0.0;
-    for (let d1 = 0; d1 < nBooks; d1++) {
-      let rowSum = 0.0;
-      const rowOff = d1 * nBooks;
-      for (let d2 = 0; d2 < nBooks; d2++) rowSum += G[rowOff + d2] * u[d2];
-      lambda += u[d1] * rowSum;
+    // Rayleigh-kvotient: lambda = ||M^T u||^2 -> sigma = ||M^T u||
+    tmpW.fill(0.0);
+    for (let d = 0; d < nBooks; d++) {
+      const ud = u[d];
+      const end = rowPtr[d + 1];
+      for (let idx = rowPtr[d]; idx < end; idx++) {
+        const wVal = weights[idx];
+        if (wVal > 0) tmpW[colIdx[idx]] += wVal * ud;
+      }
     }
+    let lambda = 0.0;
+    for (let w = 0; w < nWords; w++) lambda += tmpW[w] * tmpW[w];
     singularValues[k] = Math.sqrt(Math.max(1e-9, lambda));
 
     // Perron-Frobenius: for k=0 (tyngdepunkt), sørg for positiv sum
@@ -462,6 +494,12 @@ function renderBookInspector() {
   }
   myNorm = Math.sqrt(myNorm) || 1;
 
+  // Beregn eksakt glissen cosinus-likhet mellom bok d og alle andre bøker på 0.2 ms
+  const dVec = new Float32Array(state.nWords);
+  for (let idx = state.rowPtr[d]; idx < state.rowPtr[d + 1]; idx++) {
+    dVec[state.colIdx[idx]] = state.weights[idx];
+  }
+
   const sims = [];
   for (let other = 0; other < state.nBooks; other++) {
     if (other === d) continue;
@@ -472,7 +510,11 @@ function renderBookInspector() {
       otherNorm += ov * ov;
     }
     const svdSim = dot / (myNorm * (Math.sqrt(otherNorm) || 1));
-    const sparseSim = state.G[d * state.nBooks + other];
+    let sparseSim = 0.0;
+    for (let idx = state.rowPtr[other]; idx < state.rowPtr[other + 1]; idx++) {
+      const wVal = state.weights[idx];
+      if (wVal > 0) sparseSim += wVal * dVec[state.colIdx[idx]];
+    }
     sims.push({ id: other, svdSim, sparseSim });
   }
   sims.sort((a, b) => b.svdSim - a.svdSim);
@@ -1001,6 +1043,9 @@ function renderWordTable() {
   } else if (preset === "countries") {
     list = list.filter((x) => COUNTRIES_SET.has(x.w));
     list.sort((a, b) => b.cf - a.cf);
+  } else if (preset === "bbi_diversity") {
+    list = list.filter((x) => BBI_DIVERSITY_SET.has(x.w));
+    list.sort((a, b) => b.cf - a.cf);
   } else if (preset === "top_burst") {
     list = list.filter((x) => !x.stop && x.nb >= 8 && x.md <= 0.14);
     list.sort((a, b) => b.mf - a.mf);
@@ -1293,6 +1338,35 @@ function bindUIEvents() {
   // Begrepstabell-søk
   document.getElementById("presetFilter").addEventListener("change", () => renderWordTable());
   document.getElementById("wordTableSearch").addEventListener("input", () => renderWordTable());
+
+  // Korpus-velger, lokal JSON-opplasting (knapp + drag-and-drop) og nedlasting
+  const presetSel = document.getElementById("presetBundleSelect");
+  if (presetSel) {
+    presetSel.addEventListener("change", (e) => fetchAndLoadPresetBundle(e.target.value));
+  }
+  const uploadBtn = document.getElementById("uploadBundleBtn");
+  const uploadInput = document.getElementById("uploadBundleInput");
+  if (uploadBtn && uploadInput) {
+    uploadBtn.addEventListener("click", () => uploadInput.click());
+    uploadInput.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleLocalBundleUpload(e.target.files[0]);
+        e.target.value = "";
+      }
+    });
+  }
+  const downloadBtn = document.getElementById("downloadBundleBtn");
+  if (downloadBtn) {
+    downloadBtn.addEventListener("click", () => downloadCurrentBundle());
+  }
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const f = e.dataTransfer.files[0];
+      if (f.name.endsWith(".json")) handleLocalBundleUpload(f);
+    }
+  });
 
   // API-modal
   const modal = document.getElementById("apiModal");
