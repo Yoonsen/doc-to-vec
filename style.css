@@ -417,12 +417,18 @@ dialog {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1.25rem;
-  max-inline-size: 540px;
+  max-inline-size: 580px;
   inline-size: 92%;
+}
+
+dialog:modal {
+  overscroll-behavior: contain;
 }
 
 dialog::backdrop {
   background: rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 .form-grid {

@@ -1866,6 +1866,377 @@ function insertCurrentProbeIntoCorpus() {
   document.querySelector('nav.tabs button[data-tab="tab-map"]').click();
 }
 
+// =============================================================================
+// EKSPORT AV VEKTORMODELL (PARTIELL FUNKSJON / KOMPRIMERT SVD / GALAKSE-TABELL / TENSOR)
+// =============================================================================
+
+function computeChannelWeightsForCorpus(channel) {
+  const nBooks = state.nBooks;
+  const nWords = state.nWords;
+  const rowPtr = state.rowPtr;
+  const colIdx = state.colIdx;
+  const freq = state.freq;
+  const fano = state.fano;
+  const dfRatio = state.dfRatio;
+  const filterStop = document.getElementById("filterStop").checked;
+  const sublinearTf = document.getElementById("sublinearTf").checked;
+  const minFano = parseFloat(document.getElementById("minFano").value) || 1.15;
+  const maxDfRatio = parseFloat(document.getElementById("maxDfRatio").value) || 0.92;
+  const alpha = parseFloat(document.getElementById("ppmiAlpha").value) || 0.85;
+
+  const log2Pw = new Float32Array(nWords);
+  let bgSum = 0.0;
+  const powered = new Float64Array(nWords);
+  for (let w = 0; w < nWords; w++) {
+    const p = alpha === 1.0 ? state.wordTfBg[w] : Math.pow(state.wordTfBg[w], alpha);
+    powered[w] = p;
+    bgSum += p;
+  }
+  const scaleBg = alpha === 1.0 ? Math.max(bgSum, state.bundle.meta.total_bg_sum) : bgSum * 4.5;
+  for (let w = 0; w < nWords; w++) {
+    log2Pw[w] = Math.log2(powered[w] / scaleBg);
+  }
+
+  const outWeights = new Float32Array(state.nnz);
+  for (let d = 0; d < nBooks; d++) {
+    const start = rowPtr[d];
+    const end = rowPtr[d + 1];
+    const log2DocLen = Math.log2(state.docTokens[d]);
+    let normSq = 0.0;
+
+    for (let idx = start; idx < end; idx++) {
+      const w = colIdx[idx];
+      if (filterStop && state.wordStop[w]) continue;
+      const c = freq[idx];
+      const fn = fano[idx];
+      const dfr = dfRatio[idx];
+      const tfScale = sublinearTf ? Math.log2(1.0 + c) : 1.0;
+      const pmi = Math.max(0.0, Math.log2(c) - log2DocLen - log2Pw[w]);
+      let val = 0.0;
+
+      if (channel === "burst") {
+        if (fn >= minFano && dfr <= maxDfRatio) {
+          const excessFano = Math.max(0.0, fn - minFano + 0.15);
+          const conc = Math.max(0.05, 1.0 - dfr * 0.85);
+          val = tfScale * excessFano * conc;
+        }
+      } else if (channel === "ppmi") {
+        val = tfScale * pmi;
+      } else if (channel === "frame") {
+        if (fn <= 1.32 && dfr >= 0.82 && c >= 3) {
+          val = tfScale * Math.max(0.35, pmi);
+        }
+      } else {
+        // hybrid
+        if (fn >= minFano && dfr <= maxDfRatio && pmi > 0) {
+          val = tfScale * pmi * Math.max(0.0, fn - minFano + 0.2);
+        }
+      }
+
+      outWeights[idx] = val;
+      normSq += val * val;
+    }
+
+    const invNorm = normSq > 1e-12 ? 1.0 / Math.sqrt(normSq) : 0.0;
+    for (let idx = start; idx < end; idx++) {
+      outWeights[idx] *= invNorm;
+    }
+  }
+  return outWeights;
+}
+
+function computeSvdFromSparseWeights(wArr, kDims = 10) {
+  const nBooks = state.nBooks;
+  const nWords = state.nWords;
+  const rowPtr = state.rowPtr;
+  const colIdx = state.colIdx;
+  const U = [];
+  const singularValues = new Float64Array(kDims);
+  const tmpW = new Float64Array(nWords);
+
+  for (let k = 0; k < kDims; k++) {
+    const u = new Float64Array(nBooks);
+    for (let d = 0; d < nBooks; d++) u[d] = Math.sin((d + 1) * (k + 1.37));
+    const nextU = new Float64Array(nBooks);
+    const nIter = nBooks > 800 ? 18 : 26;
+
+    for (let iter = 0; iter < nIter; iter++) {
+      tmpW.fill(0.0);
+      for (let d = 0; d < nBooks; d++) {
+        const ud = u[d];
+        if (ud === 0.0) continue;
+        for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
+          const wVal = wArr[idx];
+          if (wVal > 0) tmpW[colIdx[idx]] += wVal * ud;
+        }
+      }
+      for (let d = 0; d < nBooks; d++) {
+        let sum = 0.0;
+        for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
+          const wVal = wArr[idx];
+          if (wVal > 0) sum += wVal * tmpW[colIdx[idx]];
+        }
+        nextU[d] = sum;
+      }
+      for (let prev = 0; prev < k; prev++) {
+        const up = U[prev];
+        let dot = 0.0;
+        for (let d = 0; d < nBooks; d++) dot += nextU[d] * up[d];
+        for (let d = 0; d < nBooks; d++) nextU[d] -= dot * up[d];
+      }
+      let norm = 0.0;
+      for (let d = 0; d < nBooks; d++) norm += nextU[d] * nextU[d];
+      norm = Math.sqrt(norm) || 1.0;
+      for (let d = 0; d < nBooks; d++) u[d] = nextU[d] / norm;
+    }
+
+    tmpW.fill(0.0);
+    for (let d = 0; d < nBooks; d++) {
+      const ud = u[d];
+      for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
+        const wVal = wArr[idx];
+        if (wVal > 0) tmpW[colIdx[idx]] += wVal * ud;
+      }
+    }
+    let lambda = 0.0;
+    for (let w = 0; w < nWords; w++) lambda += tmpW[w] * tmpW[w];
+    singularValues[k] = Math.sqrt(Math.max(1e-9, lambda));
+    if (k === 0) {
+      let s = 0;
+      for (let d = 0; d < nBooks; d++) s += u[d];
+      if (s < 0) for (let d = 0; d < nBooks; d++) u[d] = -u[d];
+    }
+    U.push(u);
+  }
+
+  const V = [];
+  for (let k = 0; k < kDims; k++) {
+    const v = new Float64Array(nWords);
+    const u = U[k];
+    const invSigma = 1.0 / singularValues[k];
+    for (let d = 0; d < nBooks; d++) {
+      const ud = u[d] * invSigma;
+      for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
+        const wVal = wArr[idx];
+        if (wVal > 0) v[colIdx[idx]] += wVal * ud;
+      }
+    }
+    V.push(v);
+  }
+  return { U, V, singularValues };
+}
+
+function updateExportHint() {
+  const vecType = document.getElementById("exportVectorType").value;
+  const fmt = document.getElementById("exportFormatType").value;
+  const hintEl = document.getElementById("exportFormatHint");
+  if (!hintEl) return;
+
+  if (fmt === "partial_jsonl") {
+    hintEl.innerHTML = `<strong>Partiell funksjon (JSONL):</strong> Hver bok eksporteres som en ord-ordbok <code>{ord: vekt}</code> uten nuller (L2-normalisert). Prikkprodukt mellom to bøkers ordbøker gir eksakt cosinus-likhet, og nye bøker utenfra kan sammenlignes direkte ved å slå opp felles ord.`;
+  } else if (fmt === "dense_svd_csv") {
+    hintEl.innerHTML = `<strong>Komprimert tett SVD-tabell (CSV, N × 10):</strong> Hver bok får 10 tette koordinater (<code>svd_1 .. svd_10</code>) beregnet fra valgt vektortype (<code>${vecType}</code>). Perfekt for intern klynging (<code>KMeans</code>, <code>HDBSCAN</code>, <code>UMAP</code>) og cosinus-anbefalinger mellom bøkene i korpuset.`;
+  } else if (fmt === "dense_galaxies_csv") {
+    hintEl.innerHTML = `<strong>Tolkbar tett Galakse-tabell (CSV, N × ${state.graphClusters.length} klynger):</strong> Hver kolonne er én av korpusets navngitte Dual-Graph-ordgalakser (f.eks. <code>${state.graphClusters.slice(0, 2).map((c) => c.name).join(", ")}</code>). Gir en komprimert tett tabell der hver dimensjon har en direkte tematisk tolkning!`;
+  } else {
+    hintEl.innerHTML = `<strong>Komprimert SVD-modell med partiell ord-basis (JSON):</strong> Inneholder både bøkenes 10 SVD-koordinater og den partielle funksjonen <code>word_basis: {ord: [v1..v10]}</code> (${"$V_k \\Sigma_k^{-1/2}$"}), slik at man også kan projisere nye bøker utenfra inn i det komprimerte rommet.`;
+  }
+}
+
+function triggerBlobDownload(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function runExportVectors() {
+  if (!state.bundle) return;
+  const vecType = document.getElementById("exportVectorType").value;
+  const fmt = document.getElementById("exportFormatType").value;
+  const topK = parseInt(document.getElementById("exportTopKWords").value, 10) || 0;
+
+  const baseName = (state.bundle.meta.corpus_name || "corpus")
+    .toLowerCase()
+    .replace(/[^a-z0-9æøå]+/g, "_")
+    .replace(/^_|_$/g, "");
+
+  const nBooks = state.nBooks;
+  const rowPtr = state.rowPtr;
+  const colIdx = state.colIdx;
+  const words = state.bundle.words;
+  const books = state.bundle.books;
+
+  if (fmt === "partial_jsonl") {
+    const lines = [];
+    if (vecType === "tensor") {
+      const wBurst = computeChannelWeightsForCorpus("burst");
+      const wFrame = computeChannelWeightsForCorpus("frame");
+      const wPpmi  = computeChannelWeightsForCorpus("ppmi");
+      const wHyb   = computeChannelWeightsForCorpus("hybrid");
+
+      for (let d = 0; d < nBooks; d++) {
+        const b = books[d];
+        const items = [];
+        for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
+          const vb = wBurst[idx], vf = wFrame[idx], vp = wPpmi[idx], vh = wHyb[idx];
+          const maxV = Math.max(vb, vf, vp, vh);
+          if (maxV > 1e-4) {
+            items.push({
+              w: words[colIdx[idx]].w,
+              maxV,
+              tuple: [Number(vb.toFixed(4)), Number(vf.toFixed(4)), Number(vp.toFixed(4)), Number(vh.toFixed(4))],
+            });
+          }
+        }
+        items.sort((a, c) => c.maxV - a.maxV);
+        const kept = topK > 0 ? items.slice(0, topK) : items;
+        const tensorObj = {};
+        kept.forEach((it) => { tensorObj[it.w] = it.tuple; });
+        lines.push(JSON.stringify({
+          id: b.id, urn: b.urn, year: b.year, title: b.title, authors: b.authors,
+          channels: ["burst", "frame", "ppmi", "hybrid"],
+          tensor: tensorObj,
+        }));
+      }
+      triggerBlobDownload(lines.join("\n"), `${baseName}_tensor_partial.jsonl`, "application/x-ndjson");
+    } else {
+      const wArr = computeChannelWeightsForCorpus(vecType);
+      for (let d = 0; d < nBooks; d++) {
+        const b = books[d];
+        const items = [];
+        for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
+          const val = wArr[idx];
+          if (val > 1e-4) items.push({ w: words[colIdx[idx]].w, val });
+        }
+        items.sort((a, c) => c.val - a.val);
+        const kept = topK > 0 ? items.slice(0, topK) : items;
+        // Re-normaliser hvis vi trunkerer til topK slik at ||v||_2 = 1
+        let normSq = 0.0;
+        kept.forEach((it) => { normSq += it.val * it.val; });
+        const inv = normSq > 1e-12 ? 1.0 / Math.sqrt(normSq) : 1.0;
+        const vecObj = {};
+        kept.forEach((it) => { vecObj[it.w] = Number((it.val * inv).toFixed(5)); });
+        lines.push(JSON.stringify({
+          id: b.id, urn: b.urn, year: b.year, title: b.title, authors: b.authors,
+          vector_type: vecType,
+          vector: vecObj,
+        }));
+      }
+      triggerBlobDownload(lines.join("\n"), `${baseName}_${vecType}_partial.jsonl`, "application/x-ndjson");
+    }
+  } else if (fmt === "dense_svd_csv" || fmt === "svd_model_json") {
+    const ch = vecType === "tensor" ? "hybrid" : vecType;
+    const wArr = computeChannelWeightsForCorpus(ch);
+    const { U, V, singularValues } = computeSvdFromSparseWeights(wArr, state.kDims);
+    const kDims = state.kDims;
+
+    if (fmt === "dense_svd_csv") {
+      const header = ["id", "urn", "year", "title", "authors"];
+      for (let k = 1; k <= kDims; k++) header.push(`${ch}_svd_${k}`);
+      const rows = [header.join(",")];
+
+      for (let d = 0; d < nBooks; d++) {
+        const b = books[d];
+        const coords = new Float64Array(kDims);
+        let normSq = 0.0;
+        for (let k = 0; k < kDims; k++) {
+          const val = U[k][d] * Math.sqrt(singularValues[k]);
+          coords[k] = val;
+          normSq += val * val;
+        }
+        const inv = normSq > 1e-12 ? 1.0 / Math.sqrt(normSq) : 1.0;
+        const esc = (s) => `"${String(s || "").replace(/"/g, '""')}"`;
+        const row = [b.id, esc(b.urn), b.year || 0, esc(b.title), esc(b.authors)];
+        for (let k = 0; k < kDims; k++) row.push((coords[k] * inv).toFixed(5));
+        rows.push(row.join(","));
+      }
+      triggerBlobDownload(rows.join("\n"), `${baseName}_${ch}_svd10.csv`, "text/csv;charset=utf-8");
+    } else {
+      const bookVectors = [];
+      for (let d = 0; d < nBooks; d++) {
+        const b = books[d];
+        const coords = [];
+        let normSq = 0.0;
+        for (let k = 0; k < kDims; k++) {
+          const val = U[k][d] * Math.sqrt(singularValues[k]);
+          coords.push(val);
+          normSq += val * val;
+        }
+        const inv = normSq > 1e-12 ? 1.0 / Math.sqrt(normSq) : 1.0;
+        bookVectors.push({
+          id: b.id, urn: b.urn, year: b.year, title: b.title, authors: b.authors,
+          svd_vec: coords.map((x) => Number((x * inv).toFixed(5))),
+        });
+      }
+      const wordBasis = {};
+      for (let w = 0; w < state.nWords; w++) {
+        if (state.wordStop[w]) continue;
+        let hasVal = false;
+        const proj = [];
+        for (let k = 0; k < kDims; k++) {
+          const pv = V[k][w] / Math.sqrt(Math.max(1e-6, singularValues[k]));
+          if (Math.abs(pv) > 1e-4) hasVal = true;
+          proj.push(Number(pv.toFixed(5)));
+        }
+        if (hasVal) wordBasis[words[w].w] = proj;
+      }
+      const modelObj = {
+        corpus_name: state.bundle.meta.corpus_name,
+        vector_type: ch,
+        k_dims: kDims,
+        singular_values: Array.from(singularValues).map((x) => Number(x.toFixed(4))),
+        books: bookVectors,
+        word_basis_partial_fn: wordBasis,
+      };
+      triggerBlobDownload(JSON.stringify(modelObj, null, 2), `${baseName}_${ch}_svd_model.json`, "application/json");
+    }
+  } else if (fmt === "dense_galaxies_csv") {
+    const ch = vecType === "tensor" ? "hybrid" : vecType;
+    const wArr = computeChannelWeightsForCorpus(ch);
+    const clusters = state.graphClusters;
+    const colWordSets = clusters.map((cl) => {
+      const s = new Set();
+      cl.members.forEach((mIdx) => s.add(state.graphNodes[mIdx].wId));
+      return s;
+    });
+
+    const cleanColName = (name, idx) =>
+      `galakse_${idx + 1}_` + name.toLowerCase().replace(/[^a-z0-9æøå]+/g, "_").replace(/^_|_$/g, "");
+    const header = ["id", "urn", "year", "title", "authors", ...clusters.map((c, i) => cleanColName(c.name, i))];
+    const rows = [header.join(",")];
+
+    for (let d = 0; d < nBooks; d++) {
+      const b = books[d];
+      const scores = new Float64Array(clusters.length);
+      for (let idx = rowPtr[d]; idx < rowPtr[d + 1]; idx++) {
+        const val = wArr[idx];
+        if (val <= 0) continue;
+        const wId = colIdx[idx];
+        for (let cIdx = 0; cIdx < clusters.length; cIdx++) {
+          if (colWordSets[cIdx].has(wId)) scores[cIdx] += val;
+        }
+      }
+      let normSq = 0.0;
+      for (let cIdx = 0; cIdx < clusters.length; cIdx++) normSq += scores[cIdx] * scores[cIdx];
+      const inv = normSq > 1e-12 ? 1.0 / Math.sqrt(normSq) : 1.0;
+
+      const esc = (s) => `"${String(s || "").replace(/"/g, '""')}"`;
+      const row = [b.id, esc(b.urn), b.year || 0, esc(b.title), esc(b.authors)];
+      for (let cIdx = 0; cIdx < clusters.length; cIdx++) row.push((scores[cIdx] * inv).toFixed(4));
+      rows.push(row.join(","));
+    }
+    triggerBlobDownload(rows.join("\n"), `${baseName}_${ch}_galaxies.csv`, "text/csv;charset=utf-8");
+  }
+
+  document.getElementById("exportModal").close();
+}
+
 function bindUIEvents() {
   // Faner
   document.querySelectorAll("nav.tabs button").forEach((btn) => {
@@ -1970,6 +2341,35 @@ function bindUIEvents() {
   document.getElementById("openApiModalBtn").addEventListener("click", () => modal.showModal());
   document.getElementById("closeApiModalBtn").addEventListener("click", () => modal.close());
   document.getElementById("runApiFetchBtn").addEventListener("click", () => runLiveApiFetch());
+
+  // Eksport-modal for vektormodeller
+  const exportModal = document.getElementById("exportModal");
+  const openExportBtn = document.getElementById("openExportModalBtn");
+  const closeExportBtn = document.getElementById("closeExportModalBtn");
+  const runExportBtn = document.getElementById("runExportVectorsBtn");
+  if (exportModal && openExportBtn) {
+    openExportBtn.addEventListener("click", () => {
+      updateExportHint();
+      exportModal.showModal();
+    });
+    closeExportBtn.addEventListener("click", () => exportModal.close());
+    runExportBtn.addEventListener("click", () => runExportVectors());
+    document.getElementById("exportVectorType").addEventListener("change", () => updateExportHint());
+    document.getElementById("exportFormatType").addEventListener("change", () => updateExportHint());
+  }
+
+  // Fallback for closedby="any" i nettlesere uten native dialog.closedBy (jf. modern-web-guidance: dialog)
+  if (!("closedBy" in HTMLDialogElement.prototype)) {
+    const outside = (e, dlg) => {
+      const r = dlg.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    for (const dlg of document.querySelectorAll('dialog[closedby="any"]')) {
+      let pressedOutside = false;
+      dlg.addEventListener("pointerdown", (e) => { pressedOutside = outside(e, dlg); });
+      dlg.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e, dlg)) dlg.close(); });
+    }
+  }
 
   // Fane 5: Sjekk enkeltbok (Multi-vektor)
   const probeNbBtn = document.getElementById("probeNbSearchBtn");
