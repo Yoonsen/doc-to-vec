@@ -243,12 +243,23 @@
   </div>
 
   <!-- MODAL FOR DIREKTE HENTING FRA NB API I NETTLESEREN -->
-  <dialog id="apiModal">
-    <h3 style="margin-block-start:0;">Hent nytt korpus direkte i nettleseren (api.nb.no/dhlab)</h3>
+  <dialog id="apiModal" aria-labelledby="api-modal-title" closedby="any">
+    <h3 id="api-modal-title" style="margin-block-start:0;">Bygg korpus fra NB API (søk eller URN-liste)</h3>
     <p style="font-size:0.84rem;color:var(--text-muted);">
-      DHlab-API-et støtter CORS direkte fra nettleseren. Du kan bygge et korpus og hente bokfrekvenser (<code>cutoff=5</code>) eller 300-ords chunks her og nå:
+      Lim inn/last opp en liste med URN-er (fra student eller korpusfil), eller søk på emne/forfatter/tittel direkte mot <code>api.nb.no/dhlab</code>:
     </p>
-    <div class="form-grid">
+    <div style="margin-block-end:0.75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:0.65rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-block-end:0.35rem;">
+        <label for="apiUrnList" style="font-size:0.82rem;font-weight:600;">A. URN-liste (valgfritt – overstyrer søkefeltene under hvis utfylt)</label>
+        <div>
+          <input type="file" id="apiUrnFileInput" accept=".txt,.csv,.tsv,.json" hidden />
+          <button type="button" id="apiUrnFileBtn" style="padding:0.25rem 0.55rem;font-size:0.78rem;">Last opp .csv / .txt med URN-er</button>
+        </div>
+      </div>
+      <textarea id="apiUrnList" rows="3" placeholder="Lim inn URN-er her (f.eks. URN:NBN:no-nb_digibok_2011100408194 ... én per linje eller fra CSV-tekst)..." style="inline-size:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:0.4rem;font-size:0.8rem;"></textarea>
+    </div>
+    <div style="font-size:0.82rem;font-weight:600;margin-block-end:0.25rem;">B. Eller bygg via metadata-søk:</div>
+    <div class="form-grid" style="margin-block-top:0.25rem;">
       <label>Emne / nøkkelord (subject)
         <input type="text" id="apiSubject" value="historie" />
       </label>
@@ -259,23 +270,23 @@
         <input type="text" id="apiTitle" placeholder="f.eks. Norges" />
       </label>
       <label>Antall bøker (limit)
-        <input type="number" id="apiLimit" value="60" min="10" max="350" />
+        <input type="number" id="apiLimit" value="60" min="10" max="500" />
       </label>
       <label>Fra år
         <input type="number" id="apiFromYear" value="1850" />
       </label>
       <label>Til år
-        <input type="number" id="apiToYear" value="2020" />
+        <input type="number" id="apiToYear" value="2024" />
       </label>
     </div>
     <label class="checkbox-row" style="margin-block-bottom:0.85rem;">
-      <input type="checkbox" id="apiFetchChunks" />
-      <span>Hent også 300-ords chunks per bok (beregner eksakt Fano-burstiness i nettleseren)</span>
+      <input type="checkbox" id="apiFetchChunks" checked />
+      <span>Hent 250-ords chunks per bok (beregner eksakt Fano-burstiness i nettleseren)</span>
     </label>
     <div id="apiProgress" style="font-size:0.83rem;color:var(--accent);margin-block-end:0.85rem;"></div>
     <div style="display:flex;justify-content:flex-end;gap:0.5rem;">
-      <button id="closeApiModalBtn">Lukk</button>
-      <button id="runApiFetchBtn" class="primary">Hent fra NB API &amp; beregn SVD</button>
+      <button type="button" id="closeApiModalBtn">Lukk</button>
+      <button type="button" id="runApiFetchBtn" class="primary">Hent fra NB API &amp; beregn modell</button>
     </div>
   </dialog>
 

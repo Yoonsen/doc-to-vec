@@ -1187,34 +1187,52 @@ function renderWordTable() {
 
 async function runLiveApiFetch() {
   const prog = document.getElementById("apiProgress");
+  const rawUrnText = (document.getElementById("apiUrnList").value || "").trim();
+  const parsedUrns = Array.from(new Set(rawUrnText.match(/URN:NBN:[^\s,;'"<>]+/gi) || []));
+
   const subject = document.getElementById("apiSubject").value.trim() || null;
   const author = document.getElementById("apiAuthor").value.trim() || null;
   const title = document.getElementById("apiTitle").value.trim() || null;
   const fromYear = parseInt(document.getElementById("apiFromYear").value, 10) || 1850;
-  const toYear = parseInt(document.getElementById("apiToYear").value, 10) || 2020;
-  const limit = Math.min(350, Math.max(10, parseInt(document.getElementById("apiLimit").value, 10) || 50));
+  const toYear = parseInt(document.getElementById("apiToYear").value, 10) || 2024;
+  const limit = Math.min(500, Math.max(10, parseInt(document.getElementById("apiLimit").value, 10) || 60));
   const alsoChunks = document.getElementById("apiFetchChunks").checked;
 
   try {
-    prog.textContent = "1/3 Bygger korpus fra https://api.nb.no/dhlab/build_corpus ...";
-    const corpusParams = { doctype: "digibok", from_year: fromYear, to_year: toYear, limit };
-    if (subject) corpusParams.subject = subject;
-    if (author) corpusParams.author = author;
-    if (title) corpusParams.title = title;
+    let cJson = {};
+    let corpusLabel = "";
+    if (parsedUrns.length > 0) {
+      prog.textContent = `1/3 Henter metadata for ${parsedUrns.length} oppgitte URN-er fra https://api.nb.no/dhlab/get_metadata ...`;
+      const mResp = await fetch("https://api.nb.no/dhlab/get_metadata", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urns: parsedUrns }),
+      });
+      cJson = await mResp.json();
+      corpusLabel = `URN-utvalg (${parsedUrns.length} bøker)`;
+    } else {
+      prog.textContent = "1/3 Bygger korpus fra https://api.nb.no/dhlab/build_corpus ...";
+      const corpusParams = { doctype: "digibok", from_year: fromYear, to_year: toYear, limit };
+      if (subject) corpusParams.subject = subject;
+      if (author) corpusParams.author = author;
+      if (title) corpusParams.title = title;
 
-    const cResp = await fetch("https://api.nb.no/dhlab/build_corpus", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(corpusParams),
-    });
-    const cJson = await cResp.json();
+      const cResp = await fetch("https://api.nb.no/dhlab/build_corpus", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpusParams),
+      });
+      cJson = await cResp.json();
+      corpusLabel = `NB API Korpus (${subject || author || title || "utvalg"})`;
+    }
+
     const urnMap = cJson.urn || {};
     const titleMap = cJson.title || {};
     const authMap = cJson.authors || {};
     const yearMap = cJson.year || {};
     const keys = Object.keys(urnMap);
     if (keys.length === 0) {
-      prog.textContent = "Ingen bøker funnet med disse søkekriteriene.";
+      prog.textContent = "Ingen bøker funnet med disse søkekriteriene / URN-ene.";
       return;
     }
 
@@ -1356,7 +1374,7 @@ async function runLiveApiFetch() {
 
     const newBundle = {
       meta: {
-        corpus_name: `NB API Korpus (${subject || author || title || "utvalg"})`,
+        corpus_name: corpusLabel,
         n_books: books.length,
         n_words: wordsMeta.length,
         nnz: colIdx.length,
@@ -2341,6 +2359,19 @@ function bindUIEvents() {
   document.getElementById("openApiModalBtn").addEventListener("click", () => modal.showModal());
   document.getElementById("closeApiModalBtn").addEventListener("click", () => modal.close());
   document.getElementById("runApiFetchBtn").addEventListener("click", () => runLiveApiFetch());
+  const urnFileBtn = document.getElementById("apiUrnFileBtn");
+  const urnFileInp = document.getElementById("apiUrnFileInput");
+  if (urnFileBtn && urnFileInp) {
+    urnFileBtn.addEventListener("click", () => urnFileInp.click());
+    urnFileInp.addEventListener("change", async (e) => {
+      if (e.target.files && e.target.files[0]) {
+        const txt = await e.target.files[0].text();
+        const matches = Array.from(new Set(txt.match(/URN:NBN:[^\s,;'"<>]+/gi) || []));
+        document.getElementById("apiUrnList").value = matches.join("\n");
+        e.target.value = "";
+      }
+    });
+  }
 
   // Eksport-modal for vektormodeller
   const exportModal = document.getElementById("exportModal");
